@@ -26,6 +26,7 @@ import {
 
 const logger = new Logger('McpServer');
 const stableAliasRequest = Symbol('stableAliasRequest');
+const stableAliasApiKey = Symbol('stableAliasApiKey');
 
 type HttpAdapter = NonNullable<HttpAdapterHost['httpAdapter']>;
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -36,6 +37,8 @@ export interface McpRequestContext {
   method?: string;
   path?: string;
 }
+
+type McpExecutionContext = McpRequestContext & { apiKeyOverride?: string };
 
 /** Extract the raw API key from MCP request headers. Accepts X-Api-Key or Bearer token. */
 function extractApiKey(extra: ToolExtra): string | undefined {
@@ -124,6 +127,7 @@ function createStableAliasAuth(
       return;
     }
     req.headers['x-api-key'] = config.backendApiKey;
+    (req as Request & { [stableAliasApiKey]?: string })[stableAliasApiKey] = config.backendApiKey;
     delete req.headers.authorization;
     next();
   };
@@ -144,7 +148,7 @@ function buildServer(
   allowEnrollmentWrites: boolean,
   serverInfo: { name: string; version: string },
   auditService: AuditService | undefined,
-  reqContext: McpRequestContext,
+  reqContext: McpExecutionContext,
 ): McpServer {
   const server = new McpServer(
     { name: serverInfo.name, version: serverInfo.version },
@@ -168,7 +172,10 @@ function buildServer(
         },
       },
       async (input: Record<string, unknown>, extra: ToolExtra) => {
-        const rawKey = extractApiKey(extra);
+        // The MCP SDK snapshots HTTP request metadata independently of Express, so a header injected
+        // by the stable-alias middleware is not guaranteed to appear in extra.requestInfo. Carry the
+        // already constant-time-validated backend credential in request-local state instead.
+        const rawKey = reqContext.apiKeyOverride ?? extractApiKey(extra);
         try {
           const result = await invokeTool(
             tool,
@@ -312,7 +319,10 @@ export function mountMcpServer(
       allowEnrollmentWrites,
       serverInfo,
       auditService,
-      resolveReqContext(req),
+      {
+        ...resolveReqContext(req),
+        apiKeyOverride: (req as Request & { [stableAliasApiKey]?: string })[stableAliasApiKey],
+      },
     );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
