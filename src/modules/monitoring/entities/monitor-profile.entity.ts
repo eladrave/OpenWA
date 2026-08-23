@@ -19,7 +19,7 @@ export class MonitorProfile {
   @Column({ type: 'varchar', length: 64 })
   principalId!: string;
 
-  @Column({ type: 'varchar', length: 64 })
+  @Column({ type: 'varchar' })
   sessionId!: string;
 
   @ManyToOne(() => Session, { onDelete: 'CASCADE' })
