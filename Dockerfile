@@ -168,7 +168,7 @@ RUN groupadd -r openwa && useradd -r -g openwa openwa
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY --chown=openwa:openwa --chmod=0644 package*.json ./
 
 # Backport upstream whatsapp-web.js#201832 (id._serialized -> id.$1 normalization,
 # broken by WA Web 2.3000.x ~2026-07-14) into the installed dep at build time.
@@ -260,7 +260,7 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 # is there for backup.sh's online-consistent snapshots — but the scripts themselves were never
 # copied into the image. lib-env.sh is sourced by both, never executed. backup.sh/restore.sh carry
 # the exec bit in the repo and COPY preserves it, so no chmod is needed.
-COPY scripts/backup.sh scripts/restore.sh scripts/lib-env.sh ./scripts/
+COPY --chown=openwa:openwa --chmod=0755 scripts/backup.sh scripts/restore.sh scripts/lib-env.sh ./scripts/
 
 # Copy entrypoint: runs as root to fix named-volume ownership, then drops to openwa via gosu
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

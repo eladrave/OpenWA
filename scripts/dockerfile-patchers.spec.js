@@ -68,3 +68,11 @@ test('builder dependency install cannot download/extract an unpatched Puppeteer 
     '.puppeteerrc.cjs must be copied before builder npm ci',
   );
 });
+
+test('production runtime metadata and operator scripts are readable by the non-root app user', () => {
+  assert.match(dockerfile, /COPY --chown=openwa:openwa --chmod=0644 package\*\.json/);
+  assert.match(
+    dockerfile,
+    /COPY --chown=openwa:openwa --chmod=0755 scripts\/backup\.sh scripts\/restore\.sh scripts\/lib-env\.sh/,
+  );
+});
