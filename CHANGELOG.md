@@ -5,17 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Baileys: an inbound shared contact card's vCard now populates the message `body`, matching what
-  whatsapp-web.js already returns for its `vcard` type. Several contacts shared
-  together (`contactsArrayMessage`) are newline-joined into one multi-vCard body, in the order they
-  were shared. Previously Baileys silently dropped this text. Thanks @memarius.
+## [0.23.2] - 2026-08-23
 
 ### Fixed
 
+- Baileys: an inbound shared contact card's vCard now populates the message `body` instead of being silently
+  dropped, matching what whatsapp-web.js returns for its `vcard` type. Several contacts shared
+  together (`contactsArrayMessage`) are newline-joined into one multi-vCard body, in the order they were
+  shared. Thanks @memarius.
 - The message-type filter on webhooks and automation rules accepts `poll`. The dashboard offered the option but
   saving was refused as invalid.
 - Baileys: inbound poll questions, shared event names and business button-reply selections now fill the message
