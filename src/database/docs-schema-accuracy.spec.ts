@@ -26,6 +26,7 @@ describe('docs/05 documents the real column names', () => {
     'modules/message',
     'modules/template',
     'modules/automation',
+    'modules/monitoring',
     'engine',
     'modules/integration',
     'modules/status-store',

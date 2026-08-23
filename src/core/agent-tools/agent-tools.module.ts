@@ -15,10 +15,22 @@ import { WebhookService } from '../../modules/webhook/webhook.service';
 import { LabelService } from '../../modules/label/label.service';
 import { AutomationRulesService } from '../../modules/automation/automation-rules.service';
 import { allAgentTools } from './tools';
+import { MonitoringModule } from '../../modules/monitoring/monitoring.module';
+import { MonitoringService } from '../../modules/monitoring/monitoring.service';
+import { EnrollmentService } from '../../modules/monitoring/enrollment.service';
 
 @Global()
 @Module({
-  imports: [SessionModule, MessageModule, ContactModule, GroupModule, WebhookModule, LabelModule, AutomationModule],
+  imports: [
+    SessionModule,
+    MessageModule,
+    ContactModule,
+    GroupModule,
+    WebhookModule,
+    LabelModule,
+    AutomationModule,
+    MonitoringModule,
+  ],
   providers: [
     {
       provide: ToolRegistryService,
@@ -30,6 +42,8 @@ import { allAgentTools } from './tools';
         WebhookService,
         LabelService,
         AutomationRulesService,
+        MonitoringService,
+        EnrollmentService,
       ],
       useFactory: (
         session: SessionService,
@@ -39,7 +53,12 @@ import { allAgentTools } from './tools';
         webhook: WebhookService,
         labels: LabelService,
         automation: AutomationRulesService,
-      ) => new ToolRegistryService(allAgentTools({ session, message, contact, group, webhook, labels, automation })),
+        monitoring: MonitoringService,
+        enrollment: EnrollmentService,
+      ) =>
+        new ToolRegistryService(
+          allAgentTools({ session, message, contact, group, webhook, labels, automation, monitoring, enrollment }),
+        ),
     },
   ],
   exports: [ToolRegistryService],

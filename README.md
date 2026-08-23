@@ -327,7 +327,7 @@ curl -X POST http://localhost:2785/api/sessions/{sessionId}/webhooks \
 
 OpenWA can expose a **curated set of tools over the [Model Context Protocol](https://modelcontextprotocol.io)** so AI agents (Claude, Cursor, …) can drive WhatsApp. It is **off by default** and **additive** — every REST route keeps working unchanged.
 
-Set `MCP_ENABLED=true` to mount a stateless Streamable-HTTP transport at **`POST /mcp`** on the existing server (same port, no extra process). It mounts **25 read-only tools** by default — session, message, contact, group, webhook, label and automation-rule _reads_ — because the surface is read-only unless you opt out. Add `MCP_READONLY=false` to mount all **51 tools**, adding the write tier (send, reply, group operations). Either way it is a focused surface rather than the full API, so agents aren't overwhelmed.
+Set `MCP_ENABLED=true` to mount a stateless Streamable-HTTP transport at **`POST /mcp`** on the existing server (same port, no extra process). The registry now contains **72 tools**, including the focused WhatsApp monitoring and bounded enrollment surface. The default mounts **36 read-only tools**. `MCP_READONLY=false` unlocks legacy generic writes, while monitoring configuration and enrollment writes remain behind their own independent gates. For ChatGPT monitoring, set `MCP_TOOL_PROFILE=monitoring` so generic contact, invite, history/media, send, block, and group-administration tools are not published.
 
 ```bash
 MCP_ENABLED=true npm run start:prod   # or set MCP_ENABLED in your .env / compose
@@ -352,8 +352,13 @@ The key can be passed as `Authorization: Bearer …` or `X-API-Key: …`. Every 
 **Security guidance:**
 
 - **Mint a dedicated, least-privilege key** for the agent — a non-admin, **session-scoped** key (`OPERATOR` role at most). The plaintext key is shown only once on creation; to rotate, create a new key and delete the old one.
-- The key **must not** carry an IP allow-list (`allowedIps`) — there is no genuine client IP over MCP, so such a key is rejected.
+- An IP allow-list remains fail-closed. The MCP mount resolves the client address through
+  `TRUSTED_PROXIES`; configure that chain exactly before using `allowedIps`.
 - Set **`MCP_READONLY=true`** to mount only the read tools (no sends/writes).
+- Set **`MCP_READONLY=false`** only when a non-monitoring client deliberately needs legacy generic WhatsApp writes.
+- Set **`MCP_TOOL_PROFILE=monitoring`** to publish only the 21 focused monitoring/enrollment tools.
+- Set **`MCP_MONITOR_CONFIG_WRITES=true`** to allow local group/rule/cursor writes without enabling WhatsApp writes.
+- Set **`MCP_ENROLLMENT_WRITES=true`** to allow the bounded enrollment state machine.
 - Set **`MCP_RATE_LIMIT_MAX`** (default `60`) to limit tool calls per API key per window.
 - Set **`MCP_RATE_LIMIT_WINDOW_MS`** (default `60000`) to control the sliding window size in milliseconds.
 - **Do not expose `/mcp` to the public internet** without a fronting auth proxy. For a self-hosted, locally-reached deployment the static API key is appropriate; public exposure should use OAuth 2.1 (not yet built).

@@ -392,6 +392,12 @@ export class MigrationTablesDto {
   @ApiProperty({ type: [Object] }) integrationDeliveryFailures!: object[];
   @ApiProperty({ type: [Object] }) statusUpdates!: object[];
   @ApiProperty({ type: [Object] }) automationRules!: object[];
+  @ApiProperty({ type: [Object] }) monitorProfiles!: object[];
+  @ApiProperty({ type: [Object] }) monitorGroups!: object[];
+  @ApiProperty({ type: [Object] }) monitorRules!: object[];
+  @ApiProperty({ type: [Object] }) monitorMatches!: object[];
+  @ApiProperty({ type: [Object] }) monitorCursors!: object[];
+  @ApiProperty({ type: [Object] }) monitorAuthFlows!: object[];
 }
 
 /** Row count per table, with the same keys as {@link MigrationTablesDto}. */
@@ -411,6 +417,12 @@ export class TableCountsDto {
   @ApiProperty({ example: 0 }) integrationDeliveryFailures!: number;
   @ApiProperty({ example: 5 }) statusUpdates!: number;
   @ApiProperty({ example: 2 }) automationRules!: number;
+  @ApiProperty({ example: 1 }) monitorProfiles!: number;
+  @ApiProperty({ example: 2 }) monitorGroups!: number;
+  @ApiProperty({ example: 5 }) monitorRules!: number;
+  @ApiProperty({ example: 20 }) monitorMatches!: number;
+  @ApiProperty({ example: 1 }) monitorCursors!: number;
+  @ApiProperty({ example: 0 }) monitorAuthFlows!: number;
 }
 
 export class OmittedInlineMediaDto {

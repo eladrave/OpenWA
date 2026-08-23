@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveMcpReadOnly } from './mcp.server';
+import { allAgentTools } from '../../core/agent-tools/tools';
 
 /**
  * README described the MCP surface as write-enabled by default and never mentioned the knob that
@@ -16,15 +17,11 @@ const repoRoot = path.join(__dirname, '..', '..', '..');
 const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
 
 function tierCounts(): { read: number; write: number } {
-  const dir = path.join(repoRoot, 'src', 'core', 'agent-tools', 'tools');
-  let read = 0;
-  let write = 0;
-  for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.tools.ts'))) {
-    const src = fs.readFileSync(path.join(dir, file), 'utf8');
-    read += (src.match(/tier:\s*'read'/g) ?? []).length;
-    write += (src.match(/tier:\s*'write'/g) ?? []).length;
-  }
-  return { read, write };
+  const tools = allAgentTools({} as never);
+  return {
+    read: tools.filter(tool => tool.tier === 'read').length,
+    write: tools.filter(tool => tool.tier === 'write').length,
+  };
 }
 
 describe('README describes the MCP surface the code actually mounts', () => {

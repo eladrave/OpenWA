@@ -1619,7 +1619,11 @@ curl -X DELETE "$BASE/api/plugins/chat-flow" \
 
 #### POST /mcp
 
-MCP JSON-RPC 2.0 transport (no `/api` prefix; gated by `MCP_ENABLED=true`). The API key goes via `X-Api-Key` or `Authorization: Bearer`; auth is enforced per tool call. The server is **read-only by default** — write tools such as `MessageSendText` are only mounted when `MCP_READONLY=false`. See doc 24 for the tool catalog.
+MCP JSON-RPC 2.0 transport (no `/api` prefix; gated by `MCP_ENABLED=true`). The API key goes via
+`X-Api-Key` or `Authorization: Bearer`; auth is enforced per tool call. The server is **read-only by
+default**. Generic writes such as `MessageSendText` require `MCP_READONLY=false`. The focused
+`MCP_TOOL_PROFILE=monitoring` catalog instead uses independent monitoring-configuration and enrollment
+write gates; see docs 24 and 34.
 
 ```bash
 # Initialize handshake

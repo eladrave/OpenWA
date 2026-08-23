@@ -43,7 +43,9 @@ const ALLOWLIST = [
       'Reachability: the vulnerable path is zip extraction inside `puppeteer browsers install`, which this ' +
       'repo calls once, at IMAGE BUILD time, on amd64 only (Dockerfile — arm64 symlinks Debian chromium and ' +
       'never calls it), against a version-pinned Chrome for Testing build fetched from Google over HTTPS. ' +
-      'Nothing in the shipped image extracts a zip through this path at runtime.',
+      'Nothing in the shipped image extracts a zip through this path at runtime. Defense in depth: ' +
+      '`patch-extract-zip-symlink.js` exact-patches the installed block to reject absolute or out-of-root ' +
+      'symlink targets; dependency drift is fatal in the production image.',
     removeWhen:
       'whatsapp-web.js ships a release whose puppeteer pin carries @puppeteer/browsers 3.x. Re-check with ' +
       '`npm view whatsapp-web.js dependencies.puppeteer` then `npm view puppeteer-core@<v> dependencies`.',

@@ -1,0 +1,7 @@
+http://{$OPENWA_MONITOR_DOMAIN} {
+	redir https://{$OPENWA_MONITOR_DOMAIN}{uri} permanent
+}
+
+{$OPENWA_MONITOR_DOMAIN} {
+	import openwa_monitor
+}

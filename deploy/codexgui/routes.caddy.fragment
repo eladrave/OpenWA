@@ -1,0 +1,15 @@
+(openwa_monitor) {
+	# A permanent compatibility URL contains a password-equivalent token. Discard this host's access
+	# logs so request paths never enter the Caddy log pipeline. The application exact-matches the token,
+	# injects a separate session-scoped backend key, and rewrites to the ordinary /mcp handler.
+	log {
+		output discard
+	}
+
+	handle /*/mcp {
+		reverse_proxy {$OPENWA_MONITOR_EDGE_ALIAS}:2785
+	}
+	handle {
+		respond 404
+	}
+}

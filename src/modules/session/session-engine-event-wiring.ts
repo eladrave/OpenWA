@@ -19,6 +19,7 @@ import {
 } from '../../engine/interfaces/whatsapp-engine.interface';
 import { type createLogger } from '../../common/services/logger.service';
 import { SessionEngineLeafEvents } from './session-engine-leaf-events';
+import { EnrollmentChallengeBroker } from './enrollment-challenge-broker.service';
 
 /**
  * The call-ins SessionEngineEventWiring needs from the lifecycle core. Built ONCE in the
@@ -64,6 +65,8 @@ export interface SessionEngineWiringHost {
   eventsGateway: EventsGateway;
   hookManager: HookManager;
   leafEvents: SessionEngineLeafEvents;
+  /** Present in the running app; absent only in legacy standalone specs. */
+  enrollmentBroker?: EnrollmentChallengeBroker;
 }
 
 /**
@@ -120,25 +123,32 @@ export class SessionEngineEventWiring {
           action: 'qr_generated',
         });
 
-        void host.webhookService.dispatch(id, 'session.qr', { sessionId: id, qr });
+        const managed = host.enrollmentBroker?.captureQr(id, qr) === true;
+        if (!managed) {
+          void host.webhookService.dispatch(id, 'session.qr', { sessionId: id, qr });
 
-        // Push the QR to subscribed dashboard clients over the WebSocket (the `session.qr` event is
-        // advertised + consumed there, so clients can render it live instead of polling GET /qr).
-        host.eventsGateway.emitQRCode(id, qr);
+          // Push the QR to subscribed dashboard clients over the WebSocket (the `session.qr` event is
+          // advertised + consumed there, so clients can render it live instead of polling GET /qr).
+          host.eventsGateway.emitQRCode(id, qr);
 
-        // Execute hook for QR event
-        void host.hookManager.execute(
-          'session:qr',
-          { sessionId: id },
-          {
-            sessionId: id,
-            source: 'Engine',
-          },
-        );
+          // Execute hook for QR event. Managed MCP enrollment suppresses this legacy fan-out because
+          // the QR is a principal-bound authentication secret and must remain inside the broker.
+          void host.hookManager.execute(
+            'session:qr',
+            { sessionId: id },
+            {
+              sessionId: id,
+              source: 'Engine',
+            },
+          );
+        }
 
         persistStatus(SessionStatus.QR_READY);
       },
-      onReady: (phone, pushName): void => host.handleEngineReady(id, engine, phone, pushName),
+      onReady: (phone, pushName): void => {
+        host.enrollmentBroker?.clearChallenge(id);
+        host.handleEngineReady(id, engine, phone, pushName);
+      },
       onMessage: (message): void => host.messages.handleInboundMessage(id, engine, message),
       onHistoryMessages: (messages): void => {
         if (!host.isLiveEngine(id, engine)) return;
@@ -196,9 +206,8 @@ export class SessionEngineEventWiring {
       },
       onCall: (event: IncomingCallEvent): void => {
         if (!host.isLiveEngine(id, engine)) return;
-        this.logger.log(`Incoming call from ${event.from}`, {
+        this.logger.log('Incoming call received', {
           sessionId: id,
-          callId: event.callId,
           isVideo: event.isVideo,
           isGroup: event.isGroup,
           action: 'call_received',

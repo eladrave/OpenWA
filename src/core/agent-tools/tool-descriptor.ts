@@ -19,8 +19,14 @@ export interface ToolDescriptor<I = unknown> {
   requiredRole?: ApiKeyRole;
   /** If true, input MUST carry `sessionId`, checked against the key's allowedSessions. */
   sessionScoped?: boolean;
+  /** Focused surface used by a deployment profile that must hide the generic OpenWA tool catalog. */
+  surface?: 'general' | 'monitoring';
+  /** Explicit capability gate for state-changing monitoring tools. */
+  writeCapability?: 'generic-whatsapp' | 'monitor-config' | 'enrollment';
+  /** Require a non-empty allowedSessions grant even though legacy admin keys may be unscoped. */
+  requiresExplicitSessionGrant?: boolean;
   /** Result rendering hint for the MCP adapter. Default 'smart'. */
-  resultDisposition?: 'json' | 'smart';
+  resultDisposition?: 'json' | 'smart' | 'content';
   /** Calls the service. Receives validated input + the resolved, scoped key. */
   handler: (input: I, apiKey: ApiKey) => Promise<unknown>;
 }

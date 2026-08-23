@@ -17,6 +17,18 @@ const w: ToolDescriptor = {
   inputSchema: z.object({}),
   handler: () => Promise.resolve(1),
 };
+const localWrite: ToolDescriptor = {
+  ...w,
+  name: 'LocalWrite',
+  surface: 'monitoring',
+  writeCapability: 'monitor-config',
+};
+const enrollmentWrite: ToolDescriptor = {
+  ...w,
+  name: 'EnrollmentWrite',
+  surface: 'monitoring',
+  writeCapability: 'enrollment',
+};
 
 describe('ToolRegistryService', () => {
   it('throws on duplicate tool names', () => {
@@ -34,6 +46,25 @@ describe('ToolRegistryService', () => {
   });
   it('get() resolves by name', () => {
     expect(new ToolRegistryService([r]).get('R')).toBe(r);
+  });
+  it('keeps monitoring and enrollment writes behind independent explicit gates', () => {
+    const reg = new ToolRegistryService([r, w, localWrite, enrollmentWrite]);
+    expect(reg.list({ readOnly: true }).map(t => t.name)).toEqual(['R']);
+    expect(reg.list({ readOnly: true, allowMonitorConfigWrites: true }).map(t => t.name)).toEqual(['R', 'LocalWrite']);
+    expect(reg.list({ readOnly: true, allowEnrollmentWrites: true }).map(t => t.name)).toEqual([
+      'R',
+      'EnrollmentWrite',
+    ]);
+    expect(
+      reg
+        .list({
+          readOnly: true,
+          profile: 'monitoring',
+          allowMonitorConfigWrites: true,
+          allowEnrollmentWrites: true,
+        })
+        .map(t => t.name),
+    ).toEqual(['LocalWrite', 'EnrollmentWrite']);
   });
 });
 
@@ -91,11 +122,32 @@ describe('v1 tool surface snapshot', () => {
       'LabelRemoveFromChat',
       'AutomationRuleFindAll',
       'AutomationRuleFindOne',
+      'WhatsAppAuthListSessions',
+      'WhatsAppAuthGetStatus',
+      'WhatsAppAuthBegin',
+      'WhatsAppAuthGetChallenge',
+      'WhatsAppAuthCancel',
+      'WhatsAppAuthDisconnect',
+      'MonitorListAvailableGroups',
+      'MonitorListGroups',
+      'MonitorSetGroup',
+      'MonitorRemoveGroup',
+      'MonitorListRules',
+      'MonitorGetRule',
+      'MonitorUpsertRule',
+      'MonitorDeleteRule',
+      'MonitorSetRuleEnabled',
+      'MonitorPreviewRule',
+      'MonitorGetMatches',
+      'MonitorGetMatch',
+      'MonitorGetDigestBatch',
+      'MonitorAcknowledgeMatches',
+      'MonitorGetHealth',
     ].sort();
 
     const actualNames = [...allAgentTools({} as never)].map(t => t.name).sort();
 
     expect(actualNames).toEqual(expected);
-    expect(expected).toHaveLength(51);
+    expect(expected).toHaveLength(72);
   });
 });

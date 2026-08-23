@@ -6017,7 +6017,11 @@ Key facts:
 
 - **Path is exactly `POST /mcp` — no `/api` prefix.** The global `api` prefix applies only to Nest controllers; this route is mounted straight on Express.
 - Gated by **`MCP_ENABLED=true`**. When off, the module/route is never mounted and `POST /mcp` returns `404`.
-- MCP is **read-only by default**: only read-tier tools are registered unless you set `MCP_READONLY=false` to expose write tools. Per-key sliding-window rate limit: `MCP_RATE_LIMIT_MAX` (default 60) per `MCP_RATE_LIMIT_WINDOW_MS` (default 60000).
+- MCP is **read-only by default**. `MCP_READONLY=false` controls legacy generic writes. The focused
+  `MCP_TOOL_PROFILE=monitoring` catalog has independent `MCP_MONITOR_CONFIG_WRITES=true` and
+  `MCP_ENROLLMENT_WRITES=true` gates, neither of which exposes generic WhatsApp write tools. Per-key
+  sliding-window rate limit: `MCP_RATE_LIMIT_MAX` (default 60) per `MCP_RATE_LIMIT_WINDOW_MS`
+  (default 60000).
 - Stateless transport (no SSE/session id for normal calls).
 
 **Request body** — JSON-RPC 2.0 envelope (validated by the MCP SDK, **not** the Nest ValidationPipe)

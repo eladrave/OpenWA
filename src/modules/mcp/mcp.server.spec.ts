@@ -1,7 +1,15 @@
 import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { auditMcpAuthFailure, createIpThrottle, mountMcpServer, resolveMcpReadOnly } from './mcp.server';
+import {
+  auditMcpAuthFailure,
+  createIpThrottle,
+  mountMcpServer,
+  resolveEnrollmentWrites,
+  resolveMcpReadOnly,
+  resolveMcpToolProfile,
+  resolveMonitorConfigWrites,
+} from './mcp.server';
 import { KeyRateLimiter } from './mcp-rate-limit';
 import { AuditAction } from '../audit/entities/audit-log.entity';
 import type { AnyToolDescriptor } from '../../core/agent-tools/tool-descriptor';
@@ -72,6 +80,44 @@ describe('resolveMcpReadOnly (secure-by-default MCP read-only flag)', () => {
   });
 });
 
+describe('focused monitoring MCP capability gates', () => {
+  const previous = {
+    profile: process.env.MCP_TOOL_PROFILE,
+    config: process.env.MCP_MONITOR_CONFIG_WRITES,
+    enrollment: process.env.MCP_ENROLLMENT_WRITES,
+  };
+  afterEach(() => {
+    for (const [key, value] of [
+      ['MCP_TOOL_PROFILE', previous.profile],
+      ['MCP_MONITOR_CONFIG_WRITES', previous.config],
+      ['MCP_ENROLLMENT_WRITES', previous.enrollment],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('defaults to the full profile with both monitoring write gates closed', () => {
+    delete process.env.MCP_TOOL_PROFILE;
+    delete process.env.MCP_MONITOR_CONFIG_WRITES;
+    delete process.env.MCP_ENROLLMENT_WRITES;
+    expect(resolveMcpToolProfile()).toBe('all');
+    expect(resolveMonitorConfigWrites()).toBe(false);
+    expect(resolveEnrollmentWrites()).toBe(false);
+  });
+
+  it('enables each focused gate only for the exact documented value', () => {
+    process.env.MCP_TOOL_PROFILE = 'monitoring';
+    process.env.MCP_MONITOR_CONFIG_WRITES = 'true';
+    process.env.MCP_ENROLLMENT_WRITES = 'true';
+    expect(resolveMcpToolProfile()).toBe('monitoring');
+    expect(resolveMonitorConfigWrites()).toBe(true);
+    expect(resolveEnrollmentWrites()).toBe(true);
+    process.env.MCP_MONITOR_CONFIG_WRITES = 'yes';
+    expect(resolveMonitorConfigWrites()).toBe(false);
+  });
+});
+
 // The MCP mount is raw Express (outside the Nest guard pipeline) and the per-key limiter only fires
 // after key validation, so a missing/invalid-key flood would otherwise reach a DB lookup unthrottled.
 // createIpThrottle gates by resolved client IP BEFORE auth and answers with a JSON-RPC 429.
@@ -114,6 +160,124 @@ describe('createIpThrottle (pre-auth per-IP MCP throttle)', () => {
     const next = jest.fn();
     throttle(makeReq('2.2.2.2'), makeRes() as unknown as Response, next);
     expect(next).toHaveBeenCalledWith();
+  });
+});
+
+describe('permanent token-in-path compatibility alias', () => {
+  const previousToken = process.env.MCP_STABLE_URL_TOKEN;
+  const previousBackend = process.env.MCP_STABLE_BACKEND_API_KEY;
+  const previousProfile = process.env.MCP_TOOL_PROFILE;
+  afterEach(() => {
+    if (previousToken === undefined) delete process.env.MCP_STABLE_URL_TOKEN;
+    else process.env.MCP_STABLE_URL_TOKEN = previousToken;
+    if (previousBackend === undefined) delete process.env.MCP_STABLE_BACKEND_API_KEY;
+    else process.env.MCP_STABLE_BACKEND_API_KEY = previousBackend;
+    if (previousProfile === undefined) delete process.env.MCP_TOOL_PROFILE;
+    else process.env.MCP_TOOL_PROFILE = previousProfile;
+  });
+
+  it('registers a non-secret wildcard, exact-matches the token, and injects the separate backend key', () => {
+    const token = 'A'.repeat(43);
+    process.env.MCP_STABLE_URL_TOKEN = token;
+    process.env.MCP_STABLE_BACKEND_API_KEY = 'backend-key';
+    process.env.MCP_TOOL_PROFILE = 'monitoring';
+    const calls: unknown[][] = [];
+    const adapter = { post: jest.fn((...args: unknown[]) => calls.push(args)) };
+    mountMcpServer(
+      adapter as unknown as Parameters<typeof mountMcpServer>[0],
+      { list: () => [] } as unknown as ToolRegistryService,
+      {} as AuthService,
+      new KeyRateLimiter(100, 60_000),
+      new KeyRateLimiter(100, 60_000),
+    );
+    expect(calls.map(call => call[0])).toEqual(['/mcp', '/:mcpToken/mcp']);
+    expect(JSON.stringify(calls.map(call => call[0]))).not.toContain(token);
+
+    const auth = calls[1][2] as (req: Request, res: Response, next: () => void) => void;
+    const req = { params: { mcpToken: token }, headers: { authorization: 'Bearer ignored' } } as unknown as Request;
+    const status = jest.fn().mockReturnThis();
+    const res = { status, end: jest.fn() } as unknown as Response;
+    const next = jest.fn();
+    auth(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.headers['x-api-key']).toBe('backend-key');
+    expect(req.headers.authorization).toBeUndefined();
+
+    const wrongReq = { params: { mcpToken: 'B'.repeat(43) }, headers: {} } as unknown as Request;
+    const wrongNext = jest.fn();
+    auth(wrongReq, res, wrongNext);
+    expect(wrongNext).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it('refuses to mount the permanent alias unless the focused monitoring profile is active', () => {
+    process.env.MCP_STABLE_URL_TOKEN = 'A'.repeat(43);
+    process.env.MCP_STABLE_BACKEND_API_KEY = 'backend-key';
+    process.env.MCP_TOOL_PROFILE = 'all';
+    const adapter = { post: jest.fn() };
+
+    expect(() =>
+      mountMcpServer(
+        adapter as unknown as Parameters<typeof mountMcpServer>[0],
+        { list: () => [] } as unknown as ToolRegistryService,
+        {} as AuthService,
+        new KeyRateLimiter(100, 60_000),
+        new KeyRateLimiter(100, 60_000),
+      ),
+    ).toThrow(/requires MCP_TOOL_PROFILE=monitoring/);
+    expect(adapter.post).toHaveBeenCalledTimes(1);
+    expect(adapter.post).not.toHaveBeenCalledWith('/:mcpToken/mcp', expect.anything());
+  });
+
+  it('puts the throttle before alias authentication and audits a wrong token under a redacted path', () => {
+    const token = 'A'.repeat(43);
+    process.env.MCP_STABLE_URL_TOKEN = token;
+    process.env.MCP_STABLE_BACKEND_API_KEY = 'backend-key';
+    process.env.MCP_TOOL_PROFILE = 'monitoring';
+    const calls: unknown[][] = [];
+    const adapter = { post: jest.fn((...args: unknown[]) => calls.push(args)) };
+    const auditService = { logWarn: jest.fn().mockResolvedValue(null) };
+    mountMcpServer(
+      adapter as unknown as Parameters<typeof mountMcpServer>[0],
+      { list: () => [] } as unknown as ToolRegistryService,
+      {} as AuthService,
+      new KeyRateLimiter(100, 60_000),
+      new KeyRateLimiter(100, 60_000),
+      {},
+      auditService as unknown as AuditService,
+    );
+
+    const aliasRoute = calls[1];
+    expect(aliasRoute[0]).toBe('/:mcpToken/mcp');
+    const throttle = aliasRoute[1] as (req: Request, res: Response, next: () => void) => void;
+    const auth = aliasRoute[2] as (req: Request, res: Response, next: () => void) => void;
+    const wrongToken = 'B'.repeat(43);
+    const req = {
+      method: 'POST',
+      path: `/${wrongToken}/mcp`,
+      params: { mcpToken: wrongToken },
+      headers: {},
+      socket: { remoteAddress: '203.0.113.9' },
+    } as unknown as Request;
+    const status = jest.fn().mockReturnThis();
+    const res = { status, end: jest.fn(), json: jest.fn() } as unknown as Response;
+    const afterThrottle = jest.fn();
+
+    throttle(req, res, afterThrottle);
+    expect(afterThrottle).toHaveBeenCalledTimes(1);
+    const afterAuth = jest.fn();
+    auth(req, res, afterAuth);
+
+    expect(afterAuth).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(404);
+    expect(auditService.logWarn).toHaveBeenCalledWith(AuditAction.API_KEY_AUTH_FAILED, {
+      ipAddress: '203.0.113.9',
+      method: 'POST',
+      path: '/<stable-token>/mcp',
+      errorMessage: 'Invalid stable MCP token',
+    });
+    expect(JSON.stringify(auditService.logWarn.mock.calls)).not.toContain(wrongToken);
+    expect(JSON.stringify(auditService.logWarn.mock.calls)).not.toContain(token);
   });
 });
 
@@ -237,9 +401,15 @@ describe('mountMcpServer (raw-Express request-handling path)', () => {
     return { routeHandler, tool, authService, auditService };
   };
 
-  type ResMock = { on: jest.Mock; status: jest.Mock; json: jest.Mock; headersSent: boolean };
+  type ResMock = { on: jest.Mock; setHeader: jest.Mock; status: jest.Mock; json: jest.Mock; headersSent: boolean };
   const makeRes = (): ResMock => {
-    const res: ResMock = { on: jest.fn(), status: jest.fn(), json: jest.fn(), headersSent: false };
+    const res: ResMock = {
+      on: jest.fn(),
+      setHeader: jest.fn(),
+      status: jest.fn(),
+      json: jest.fn(),
+      headersSent: false,
+    };
     res.status.mockReturnValue(res);
     res.json.mockReturnValue(res);
     return res;
@@ -281,6 +451,9 @@ describe('mountMcpServer (raw-Express request-handling path)', () => {
     expect(mockServerConnect).toHaveBeenCalledTimes(1); // fresh server+transport wired per request
     expect(mockHandleRequest).toHaveBeenCalledWith(req, res, body);
     expect(res.on).toHaveBeenCalledWith('close', expect.any(Function)); // per-request teardown wired
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(res.setHeader).toHaveBeenCalledWith('Pragma', 'no-cache');
+    expect(res.setHeader).toHaveBeenCalledWith('Referrer-Policy', 'no-referrer');
     expect(res.status).not.toHaveBeenCalled(); // no error fallback
   });
 
@@ -301,7 +474,7 @@ describe('mountMcpServer (raw-Express request-handling path)', () => {
       name: 'UnauthorizedException',
       message: 'API key is invalid',
     });
-    expect(h.authService.validateApiKey).toHaveBeenCalledWith('bad-key', undefined, 's1');
+    expect(h.authService.validateApiKey).toHaveBeenCalledWith('bad-key', '203.0.113.7', 's1');
     expect(h.tool.handler).not.toHaveBeenCalled(); // refused before the tool runs
     // ...and the auth failure hits the audit trail with the real request context (mirrors REST).
     expect(h.auditService.logWarn).toHaveBeenCalledWith(

@@ -29,6 +29,7 @@ import { SessionLifecycleFences } from './session-lifecycle-fences';
 import { SessionStatusBroadcaster } from './session-status-broadcaster';
 import { SessionEngineLeafEvents } from './session-engine-leaf-events';
 import { SessionEngineEventWiring, SessionEngineWiringHost } from './session-engine-event-wiring';
+import { EnrollmentChallengeBroker } from './enrollment-challenge-broker.service';
 import { SessionEngineControls } from './session-engine-controls';
 import { SessionOwnershipService, nodeOwnsSession } from './session-ownership.service';
 
@@ -260,6 +261,8 @@ export class SessionEngineLifecycle {
     // ownsSession() default below therefore has to be TRUE, not false.
     @Optional()
     private readonly ownership?: SessionOwnershipService,
+    @Optional()
+    private readonly enrollmentBroker?: EnrollmentChallengeBroker,
   ) {
     // The fence Maps are handed over BY REFERENCE: they stay lifecycle fields (specs poke them
     // through the lifecycle), while the fence logic operates on the same instances.
@@ -323,6 +326,7 @@ export class SessionEngineLifecycle {
       eventsGateway: this.eventsGateway,
       hookManager: this.hookManager,
       leafEvents: this.leafEvents,
+      enrollmentBroker: this.enrollmentBroker,
     };
     // The controls host wires the extracted control verbs: the dependency values are captured at
     // construction, the shared Sets/Maps and the Task-1 units go over BY REFERENCE (specs poke them
@@ -673,10 +677,8 @@ export class SessionEngineLifecycle {
   /** Engine callback body, lifted out of initializeEngine so the wiring table stays readable. */
   private handleEngineReady(id: string, engine: IWhatsAppEngine, phone: string, pushName: string): void {
     if (!this.isLiveEngine(id, engine)) return;
-    this.logger.log(`Session ready: ${phone}`, {
+    this.logger.log('Session ready', {
       sessionId: id,
-      phone,
-      pushName,
       action: 'ready',
     });
 

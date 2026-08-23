@@ -11,6 +11,7 @@ import { getRestrictedSessionCount } from '../../common/metrics/session-restrict
 import { getSendPacingRefusals } from '../../common/metrics/send-pacing-metrics';
 import { renderHttpRequestMetrics } from '../../common/metrics/request-metrics';
 import { createLogger } from '../../common/services/logger.service';
+import { getMonitoringMetrics } from '../../common/metrics/monitoring-metrics';
 
 /**
  * Prometheus exposition for OpenWA. Kept dependency-free (no prom-client) — the
@@ -158,6 +159,53 @@ export class MetricsService {
         lines.push(`openwa_send_pacing_refusals_total{reason="${this.escapeLabel(reason)}"} ${count}`);
       }
     }
+
+    const monitoring = getMonitoringMetrics();
+    lines.push('# HELP openwa_mcp_requests_total MCP HTTP requests handled since process start.');
+    lines.push('# TYPE openwa_mcp_requests_total counter');
+    lines.push(`openwa_mcp_requests_total ${monitoring.mcpRequests}`);
+    lines.push('# HELP openwa_mcp_request_duration_seconds_total Cumulative MCP request duration in seconds.');
+    lines.push('# TYPE openwa_mcp_request_duration_seconds_total counter');
+    lines.push(`openwa_mcp_request_duration_seconds_total ${monitoring.mcpDurationSeconds}`);
+    lines.push(
+      '# HELP openwa_mcp_auth_failures_total MCP authentication or authorization failures since process start.',
+    );
+    lines.push('# TYPE openwa_mcp_auth_failures_total counter');
+    lines.push(`openwa_mcp_auth_failures_total ${monitoring.mcpAuthFailures}`);
+    lines.push('# HELP openwa_mcp_rate_limits_total MCP requests or tool calls refused by a rate limit.');
+    lines.push('# TYPE openwa_mcp_rate_limits_total counter');
+    lines.push(`openwa_mcp_rate_limits_total ${monitoring.mcpRateLimits}`);
+    lines.push('# HELP openwa_mcp_validation_failures_total MCP tool calls rejected by bounded input validation.');
+    lines.push('# TYPE openwa_mcp_validation_failures_total counter');
+    lines.push(`openwa_mcp_validation_failures_total ${monitoring.mcpValidationFailures}`);
+    lines.push('# HELP openwa_monitor_candidates_total Semantic-assessment candidates persisted since process start.');
+    lines.push('# TYPE openwa_monitor_candidates_total counter');
+    lines.push(`openwa_monitor_candidates_total ${monitoring.monitorCandidates}`);
+    lines.push('# HELP openwa_monitor_matches_total Monitoring matches persisted by normalized priority.');
+    lines.push('# TYPE openwa_monitor_matches_total counter');
+    for (const [priority, count] of Object.entries(monitoring.monitorMatchesByPriority)) {
+      lines.push(`openwa_monitor_matches_total{priority="${this.escapeLabel(priority)}"} ${count}`);
+    }
+    lines.push(
+      '# HELP openwa_monitor_deduplications_total Live monitoring insert attempts refused by the message/rule unique key.',
+    );
+    lines.push('# TYPE openwa_monitor_deduplications_total counter');
+    lines.push(`openwa_monitor_deduplications_total ${monitoring.monitorDeduplications}`);
+    lines.push(
+      '# HELP openwa_monitor_retention_deletions_total Monitoring matches deleted by retention since process start.',
+    );
+    lines.push('# TYPE openwa_monitor_retention_deletions_total counter');
+    lines.push(`openwa_monitor_retention_deletions_total ${monitoring.monitorRetentionDeletions}`);
+    gauge(
+      'openwa_monitor_digest_backlog',
+      'Current globally observed unacknowledged monitoring matches.',
+      monitoring.digestBacklog,
+    );
+    gauge(
+      'openwa_monitor_oldest_unacknowledged_age_seconds',
+      'Age in seconds of the oldest globally observed unacknowledged monitoring match.',
+      monitoring.oldestUnacknowledgedAgeSeconds,
+    );
 
     // HTTP RED metrics (request rate + duration per route), recorded by RequestMetricsInterceptor.
     // Included in the same cached render — a few seconds of staleness is fine for Prometheus.

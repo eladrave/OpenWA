@@ -14,9 +14,23 @@ export class ToolRegistryService {
     }
   }
 
-  list(opts: { readOnly?: boolean } = {}): AnyToolDescriptor[] {
-    const all = [...this.byName.values()];
-    return opts.readOnly ? all.filter(t => t.tier === 'read') : all;
+  list(
+    opts: {
+      readOnly?: boolean;
+      profile?: 'all' | 'monitoring';
+      allowMonitorConfigWrites?: boolean;
+      allowEnrollmentWrites?: boolean;
+    } = {},
+  ): AnyToolDescriptor[] {
+    const all = [...this.byName.values()].filter(
+      tool => (opts.profile ?? 'all') !== 'monitoring' || tool.surface === 'monitoring',
+    );
+    return all.filter(tool => {
+      if (tool.tier === 'read') return true;
+      if (tool.writeCapability === 'monitor-config') return opts.allowMonitorConfigWrites === true;
+      if (tool.writeCapability === 'enrollment') return opts.allowEnrollmentWrites === true;
+      return opts.readOnly !== true;
+    });
   }
 
   get(name: string): AnyToolDescriptor | undefined {

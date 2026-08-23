@@ -81,7 +81,7 @@ flowchart TB
 flowchart LR
     Client[MCP client] -->|POST /mcp| Adapter
     subgraph Core["src/core/agent-tools (SDK-free)"]
-        Registry[ToolRegistryService<br/>51 ToolDescriptors]
+        Registry[ToolRegistryService<br/>72 ToolDescriptors]
         Invoker[invokeTool<br/>auth → validate → handler]
     end
     subgraph Adapter["src/modules/mcp (SDK, opt-in)"]
@@ -127,6 +127,8 @@ declares a `tier` (`read` | `write`) and, for writes, a required role.
 | **Webhook**    | list, get (read-only)                                   | —                                                                                             |
 | **Label**      | list, get, chats for a label, labels on a chat          | upsert, delete, add to chat, remove from chat                                                 |
 | **Automation** | rules list, get                                         | —                                                                                             |
+| **Monitoring** | groups, rules, preview, matches, digest, health         | local group/rule configuration and digest acknowledgment                                      |
+| **Enrollment** | allowed sessions, safe status                           | begin, ImageContent/pairing challenge, cancel, confirmed disconnect                           |
 
 > **Labels split across the engines**, and each tool's description says which way. Every label
 > _read_ needs whatsapp-web.js — Baileys exposes no label query at all. Editing a label (upsert,
@@ -150,6 +152,16 @@ opt in to write tools with `MCP_READONLY=false`. Any other value (or leaving it 
 read-only posture, so enabling MCP never silently exposes state-changing tools. Set `MCP_READONLY=false`
 only when an agent genuinely needs to send messages / mutate state.
 
+Monitoring uses two independent gates that do **not** expose the generic WhatsApp write tier:
+
+- `MCP_MONITOR_CONFIG_WRITES=true` enables only local monitoring configuration and acknowledgment.
+- `MCP_ENROLLMENT_WRITES=true` enables only the bounded enrollment state machine.
+
+For a ChatGPT monitoring deployment, `MCP_TOOL_PROFILE=monitoring` hides the complete generic tool
+catalog and publishes only the 21 monitoring/enrollment descriptors. Every session-specific focused
+tool also requires a non-empty exact `allowedSessions` grant; legacy unscoped-key semantics do not
+apply to this surface.
+
 ## 24.5 Authentication & Security
 
 - **Same authorization as REST.** Tool calls are authorized by `AuthService` — role and
@@ -158,9 +170,9 @@ only when an agent genuinely needs to send messages / mutate state.
 - **Least-privilege keys.** Mint a **dedicated, non-admin, session-scoped** key for each
   MCP client (`OPERATOR` role at most). The plaintext key is shown once on creation; to
   rotate, create a new key and delete the old one.
-- **No IP allow-list over MCP.** There is no genuine client IP on a tool call, so a key
-  that carries an `allowedIps` list will be rejected. Use a key without `allowedIps` for
-  MCP.
+- **Proxy-aware IP handling.** The MCP mount resolves the client IP using `TRUSTED_PROXIES` and passes
+  it to the same API-key validator as REST. An `allowedIps` key therefore remains fail-closed when the
+  address cannot be established and should be used only when the proxy chain is configured exactly.
 - **Rate limiting.** A per-key limiter (keyed by the _authenticated_ key id) bounds tool
   calls. The key map is capped (approximate-LRU eviction at 50,000 keys), so a
   distinct-key flood cannot grow process memory without limit. This is independent of
@@ -176,9 +188,11 @@ only when an agent genuinely needs to send messages / mutate state.
 - **Response parity.** Tools reuse the REST response DTOs, so sensitive fields the REST
   API strips (e.g. webhook HMAC secrets and custom headers, session proxy URLs and engine
   config) are **not** exposed over MCP.
-- **Do not expose `/mcp` to the public internet** without a fronting authentication proxy.
-  The static API key is appropriate for a self-hosted, locally/network-reached deployment;
-  public exposure should wait for OAuth 2.1 support (planned).
+- **Public authentication.** Published or multi-user plugins should use OAuth 2.1 per the current MCP
+  authorization contract. A personal single-user deployment may use an explicitly approved,
+  high-entropy token-in-path compatibility bridge at the fronting proxy. That path must exact-match,
+  be excluded from access logs, inject a separate session-scoped backend key, remain rotatable, and
+  never be represented as multi-user OAuth.
 
 ## 24.6 Enabling & Client Setup
 
@@ -186,6 +200,9 @@ only when an agent genuinely needs to send messages / mutate state.
 MCP_ENABLED=true npm run start:prod   # or set MCP_ENABLED in your .env / compose
 # optional:
 MCP_READONLY=false                    # expose write tools (default is read-only when unset)
+MCP_TOOL_PROFILE=monitoring           # publish only focused monitoring/enrollment tools
+MCP_MONITOR_CONFIG_WRITES=true        # local monitoring writes only
+MCP_ENROLLMENT_WRITES=true            # bounded enrollment writes only
 MCP_RATE_LIMIT_MAX=60                 # max tool calls per key per window (default 60)
 MCP_RATE_LIMIT_WINDOW_MS=60000        # sliding window in ms (default 60000 = 1 min)
 MCP_IP_RATE_LIMIT_MAX=120             # pre-auth per-IP request cap per window (default 120)

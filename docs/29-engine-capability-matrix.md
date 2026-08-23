@@ -5,7 +5,7 @@ Three-way comparison of every capability: the **Baileys library** (`@whiskeysock
 its adapter layer and REST API — including which "supported" cells only work because OpenWA patches
 the installed library. Coverage is total: all 112 `IWhatsAppEngine` methods (29.4), **all 152
 Baileys + 81 whatsapp-web.js library methods** (29.5), all 34 + 31 library events (29.5.4), and all
-8 install-time patches (29.3). If it exists upstream or in OpenWA, it has a row here.
+9 install-time patches (29.3). If it exists upstream or in OpenWA, it has a row here.
 
 ## 29.1 How to read this matrix
 
@@ -125,13 +125,13 @@ wrong interface method. Those three remain reader-verified.
 
 ## 29.3 Install-time patches OpenWA applies to the libraries
 
-OpenWA ships eight exact, self-disabling source transforms over the installed engines. Each runs at
+OpenWA ships nine exact, self-disabling source transforms over installed dependencies. Each runs at
 `npm install` (`scripts/postinstall.js`, `--best-effort`) and again in the Docker production stage
 (**without** best-effort — dependency drift fails the image build). "Self-disabling" means the
 patcher no-ops once the fix is present upstream, and an unrecognized source shape fails loudly
 rather than shipping a silently partial patch.
 
-### 29.3.1 The eight patches
+### 29.3.1 The nine patches
 
 | #   | Patcher                                                    | Library target                       | What it repairs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Stand-down predicate                                                                                                                                                                                                                                                                                                                                                  |
 | --- | ---------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -143,11 +143,13 @@ rather than shipping a silently partial patch.
 | 🔧⁶ | `scripts/patch-baileys-newsletter-create.js`               | Baileys `lib/Socket/newsletter.js`   | `parseNewsletterCreateResponse` reads `thread.picture.id` eagerly, but `newsletterCreate` sends only `{ name, description }` — there is no picture parameter anywhere in the chain — so `thread.picture` is null on EVERY create and the parse threw for all of them. WhatsApp creates the newsletter server-side BEFORE the response is parsed, so each call returned 500 while leaving a real channel behind, and `createChannel` is non-idempotent, so a client retrying a 5xx leaked one orphan per attempt (confirmed on the test account). `description` has the same defect whenever the caller omits one. The patch reads every nested field defensively so the response's `id` — the only place the new channel's id appears — always survives. | exact-shape match; remove once upstream tolerates a pictureless newsletter.                                                                                                                                                                                                                                                                                           |
 | 🔧⁷ | `scripts/patch-wwebjs-participant-arity.js`                | whatsapp-web.js `GroupChat.js`       | `removeParticipants`/`promoteParticipants`/`demoteParticipants` resolve each requested id against the group's own member collection and drop what they cannot find, then resolve `{status: 200}` for the batch. Dropping EVERY id left the WA Web request builder an empty repeated field, whose arity assertion threw — the caller saw an unnamed `500` on removal. Promote and demote have no such assertion, so they answered `200` claiming success for people WhatsApp never touched. The patch keeps the resolved array with its holes, skips the call when nothing resolved, and returns `matched` (one boolean per REQUESTED id) so the adapter can report a per-participant outcome instead of inventing one.                                   | exact-shape match; remove once upstream reports which participants it acted on.                                                                                                                                                                                                                                                                                       |
 | 🔧⁸ | `scripts/patch-wwebjs-block.js`                            | whatsapp-web.js `Contact.js`         | `Contact.block()`/`unblock()` resolved their target through `getContactToBlockOnlyUseIfNoAssociatedChat`, which WhatsApp Web removed, so both answered an opaque `500` for every id shape. The replacement helpers `handleBlock`/`handleUnblock` are modal-driven UI wrappers that block nothing when called headless, and the server now refuses a phone-keyed block outright (`trying to block a pn contact without a chat`) because individual chats are keyed by LID while wwjs folds every id back to a phone number. Resolves through `WAWebLidMigrationUtils.toUserLid` to the chat-owning identity and calls `blockContact`/`unblockContact` directly, falling back to the original contact when no LID or chat exists.                          | exact-shape match on both bodies; unknown shape fails the build.                                                                                                                                                                                                                                                                                                      |
+| 🔧⁹ | `scripts/patch-extract-zip-symlink.js`                     | extract-zip `index.js`               | CVE-2026-56876: the latest published `extract-zip` accepts absolute or out-of-root symlink targets. Puppeteer's browser installer is the only reachable path and runs only during the image build against a version-pinned Google Chrome archive; install-time browser downloads are disabled everywhere else. The patch rejects absolute and parent-traversing targets before creating a symlink.                                                                                                                                                                                                                                                                                                                                                       | remove once Puppeteer's pinned browser installer no longer depends on vulnerable extract-zip, then remove the advisory allowlist entry too.                                                                                                                                                                                                                           |
 
 ### 29.3.2 Which matrix rows depend on which patch
 
-This is the patch visibility the matrix cells refer to. Every patch is engine-specific (6 on wwjs,
-2 on Baileys), and **no row carries a row-level patch mark on both engines**. The two column-wide
+This is the patch visibility the matrix cells refer to. Eight patches are engine-specific (6 on wwjs,
+2 on Baileys). 🔧⁹ is build-supply-chain hardening and has no engine matrix row. **No row carries a
+row-level patch mark on both engines**. The two column-wide
 patches are a separate matter: 🔧¹ underwrites every wwjs cell and 🔧⁵ every baileys cell, so in
 that sense every row does depend on a patch on each side. "Patch-dependent" below means the
 row-level marks.
@@ -969,8 +971,31 @@ adapter sources — re-derive the same way when anything changes:
   provides, and `transferChannelOwnership`, whose page function rejects locally against a
   subscriber list it cannot repopulate (both in 29.6.2). Both answer 501 on wwjs. `.d.ts` presence
   is not capability, and only a live call distinguishes the two.
-- **8** install-time patches (6 whatsapp-web.js + 2 Baileys), all exact and self-disabling.
+- **9** install-time patches (6 whatsapp-web.js + 2 Baileys + 1 build-supply-chain), all exact and
+  self-disabling.
 - **0 phantom-support rows** — every `not-available` cell throws at the adapter boundary.
 - Remaining adapter-gaps (fixable in this repo, ranked): **#1** `getChannelMessages` (Baileys —
   fetch is one line, `BinaryNode`→`ChannelMessage` parser is the work); **#2** `subscribeToChannel`
   (wwjs — two-step `getChannelByInviteCode` → `subscribeToChannel`, needs live verification).
+
+## 29.9 WhatsApp monitoring compatibility
+
+The focused monitoring domain consumes the neutral interface above; it does not import either
+engine directly. The automated evidence below uses adapter and engine-neutral fixtures. A disposable
+account acceptance pass is still required for a particular WhatsApp/Web build before calling that
+deployment live-verified.
+
+| Monitoring capability                     | Baileys           | whatsapp-web.js   | Boundary                                                                                    |
+| ----------------------------------------- | ----------------- | ----------------- | ------------------------------------------------------------------------------------------- |
+| QR enrollment                             | ✅ adapter-tested | ✅ adapter-tested | Challenge is intercepted and returned only as short-lived MCP image content.                |
+| Pairing-code request                      | ✅ adapter-tested | ✅ adapter-tested | Requires an initialized engine; failures surface explicitly instead of falling back to QR.  |
+| Stable group JIDs and paged group listing | ✅                | ✅                | Timeouts are errors, never an empty list.                                                   |
+| Incoming group message normalization      | ✅                | ✅                | Uses the neutral `IncomingMessage` envelope and persisted message row.                      |
+| Structured mention IDs                    | ✅ adapter-tested | ✅ adapter-tested | Owner matching uses `mentionedIds`, never body substrings alone.                            |
+| Captions and neutral message types        | ✅ fixture-tested | ✅ fixture-tested | Unknown/unsupported shapes normalize to a bounded type rather than changing rule semantics. |
+| Edit projection                           | ✅ adapter-tested | ✅ adapter-tested | Source-row mutation and monitoring re-evaluation share a per-message queue.                 |
+| Revocation projection                     | ✅ adapter-tested | ✅ adapter-tested | Retained match body/media is removed and type becomes `revoked`.                            |
+| Duplicate/reconnect delivery              | ✅                | ✅                | Source-message and match uniqueness keys make replay idempotent.                            |
+| Live synchronous history                  | ❌ explicit 501   | ✅                | Monitoring preview uses bounded persisted history on both engines for consistent behavior.  |
+| `fromMe` exclusion                        | ✅                | ✅                | Monitoring ignores outbound/self messages.                                                  |
+| Media download by default                 | disabled          | disabled          | Only compact MIME/name/size/omission metadata is projected.                                 |

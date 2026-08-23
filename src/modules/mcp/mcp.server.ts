@@ -6,17 +6,26 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type RequestHandler, type Response } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import { invokeTool } from '../../core/agent-tools/tool-invoker';
 import type { ToolRegistryService } from '../../core/agent-tools/tool-registry.service';
 import type { AuthService } from '../auth/auth.service';
 import type { AuditService } from '../audit/audit.service';
 import { AuditAction } from '../audit/entities/audit-log.entity';
-import { handleToolError, jsonToolResult, smartToolResult } from './tool-result';
+import { contentToolResult, handleToolError, jsonToolResult, smartToolResult } from './tool-result';
 import type { KeyRateLimiter } from './mcp-rate-limit';
 import { resolveClientIp } from '../../common/utils/ip';
 import { resolveBodyLimit } from '../../config/bootstrap-security';
+import { setRequestActor } from '../../common/services/request-context';
+import {
+  recordMcpAuthFailure,
+  recordMcpRateLimit,
+  recordMcpRequest,
+  recordMcpValidationFailure,
+} from '../../common/metrics/monitoring-metrics';
 
 const logger = new Logger('McpServer');
+const stableAliasRequest = Symbol('stableAliasRequest');
 
 type HttpAdapter = NonNullable<HttpAdapterHost['httpAdapter']>;
 type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -55,8 +64,9 @@ export function auditMcpAuthFailure(
   error: unknown,
   reqContext: McpRequestContext,
 ): void {
-  if (!auditService) return;
   if (error instanceof UnauthorizedException || error instanceof ForbiddenException) {
+    recordMcpAuthFailure();
+    if (!auditService) return;
     void auditService.logWarn(AuditAction.API_KEY_AUTH_FAILED, {
       ipAddress: reqContext.ipAddress,
       method: reqContext.method,
@@ -79,7 +89,43 @@ function resolveReqContext(req: Request): McpRequestContext {
   return {
     ipAddress: resolveClientIp(req, readTrustedProxies()),
     method: req.method,
-    path: req.path,
+    path: (req as Request & { [stableAliasRequest]?: boolean })[stableAliasRequest] ? '/<stable-token>/mcp' : req.path,
+  };
+}
+
+function readStableAlias(): { token: string; backendApiKey: string } | null {
+  const token = (process.env.MCP_STABLE_URL_TOKEN ?? '').trim();
+  const backendApiKey = (process.env.MCP_STABLE_BACKEND_API_KEY ?? '').trim();
+  if (!token && !backendApiKey) return null;
+  if (!token || !backendApiKey) {
+    throw new Error('MCP_STABLE_URL_TOKEN and MCP_STABLE_BACKEND_API_KEY must be configured together');
+  }
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(token)) {
+    throw new Error('MCP_STABLE_URL_TOKEN must be 43-128 URL-safe high-entropy characters');
+  }
+  if (process.env.MCP_TOOL_PROFILE !== 'monitoring') {
+    throw new Error('MCP_STABLE_URL_TOKEN requires MCP_TOOL_PROFILE=monitoring');
+  }
+  return { token, backendApiKey };
+}
+
+function createStableAliasAuth(
+  config: { token: string; backendApiKey: string },
+  auditService?: AuditService,
+): RequestHandler {
+  return (req, res, next) => {
+    (req as Request & { [stableAliasRequest]?: boolean })[stableAliasRequest] = true;
+    const presented = typeof req.params.mcpToken === 'string' ? req.params.mcpToken : '';
+    const a = Buffer.from(presented);
+    const b = Buffer.from(config.token);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      auditMcpAuthFailure(auditService, new UnauthorizedException('Invalid stable MCP token'), resolveReqContext(req));
+      res.status(404).end();
+      return;
+    }
+    req.headers['x-api-key'] = config.backendApiKey;
+    delete req.headers.authorization;
+    next();
   };
 }
 
@@ -93,6 +139,9 @@ function buildServer(
   authService: AuthService,
   rateLimiter: KeyRateLimiter,
   readOnly: boolean,
+  profile: 'all' | 'monitoring',
+  allowMonitorConfigWrites: boolean,
+  allowEnrollmentWrites: boolean,
   serverInfo: { name: string; version: string },
   auditService: AuditService | undefined,
   reqContext: McpRequestContext,
@@ -102,7 +151,7 @@ function buildServer(
     { capabilities: { tools: {}, logging: {} } },
   );
 
-  const tools = registry.list({ readOnly });
+  const tools = registry.list({ readOnly, profile, allowMonitorConfigWrites, allowEnrollmentWrites });
   for (const tool of tools) {
     server.registerTool(
       tool.name,
@@ -126,17 +175,28 @@ function buildServer(
             input,
             rawKey,
             authService,
-            id => rateLimiter.check(id),
+            apiKey => {
+              rateLimiter.check(apiKey.id);
+              setRequestActor({ apiKeyId: apiKey.id, apiKeyName: apiKey.name, ipAddress: reqContext.ipAddress });
+            },
             // onAuthFailure: mirror the REST ApiKeyGuard — record rejected/denied auth attempts (401/403
             // only) at the auth boundary so the audit trail covers MCP credential probing. Fires inside
             // invokeTool's auth phase (before the tool handler), so handler-thrown 403s are NOT mislabeled
             // as auth failures. Best-effort; success and non-auth errors skip this.
             error => auditMcpAuthFailure(auditService, error, reqContext),
+            reqContext.ipAddress,
           );
+          if (tool.resultDisposition === 'content') {
+            return contentToolResult(result as Parameters<typeof contentToolResult>[0]);
+          }
           return tool.resultDisposition === 'json'
             ? jsonToolResult(result as object)
             : smartToolResult(result as object);
         } catch (error) {
+          if (error instanceof HttpException) {
+            if (error.getStatus() === 429) recordMcpRateLimit();
+            else if (error.getStatus() === 400) recordMcpValidationFailure();
+          }
           return handleToolError(error);
         }
       },
@@ -176,6 +236,7 @@ export function createIpThrottle(ipRateLimiter: KeyRateLimiter): RequestHandler 
       ipRateLimiter.check(ip);
       next();
     } catch (err) {
+      recordMcpRateLimit();
       const status = err instanceof HttpException ? err.getStatus() : 429;
       res.status(status).json({
         jsonrpc: '2.0',
@@ -196,6 +257,18 @@ export function resolveMcpReadOnly(optionsReadOnly?: boolean): boolean {
   return optionsReadOnly ?? process.env.MCP_READONLY !== 'false';
 }
 
+export function resolveMcpToolProfile(): 'all' | 'monitoring' {
+  return process.env.MCP_TOOL_PROFILE === 'monitoring' ? 'monitoring' : 'all';
+}
+
+export function resolveMonitorConfigWrites(): boolean {
+  return process.env.MCP_MONITOR_CONFIG_WRITES === 'true';
+}
+
+export function resolveEnrollmentWrites(): boolean {
+  return process.env.MCP_ENROLLMENT_WRITES === 'true';
+}
+
 export function mountMcpServer(
   httpAdapter: HttpAdapter,
   registry: ToolRegistryService,
@@ -208,19 +281,35 @@ export function mountMcpServer(
   const basePath = (options.basePath ?? '/mcp').replace(/\/$/, '') || '/mcp';
   const serverInfo = options.serverInfo ?? { name: 'openwa', version: '0.0.0' };
   const readOnly = resolveMcpReadOnly(options.readOnly);
+  const profile = resolveMcpToolProfile();
+  const allowMonitorConfigWrites = resolveMonitorConfigWrites();
+  const allowEnrollmentWrites = resolveEnrollmentWrites();
 
   // Eagerly compute the tool list at mount time to validate the registry is populated
   // and to emit the log line once. The actual McpServer is re-created per request to
   // avoid the SDK's single-transport-at-a-time constraint under concurrent load.
-  const tools = registry.list({ readOnly });
+  const tools = registry.list({ readOnly, profile, allowMonitorConfigWrites, allowEnrollmentWrites });
   logger.log(`MCP server mounted at POST ${basePath} (${tools.length} tools)`);
 
   const handler: RequestHandler = async (req: Request, res: Response) => {
+    const startedAt = Date.now();
+    let requestRecorded = false;
+    const recordRequest = (): void => {
+      if (requestRecorded) return;
+      requestRecorded = true;
+      recordMcpRequest(Date.now() - startedAt);
+    };
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Referrer-Policy', 'no-referrer');
     const server = buildServer(
       registry,
       authService,
       rateLimiter,
       readOnly,
+      profile,
+      allowMonitorConfigWrites,
+      allowEnrollmentWrites,
       serverInfo,
       auditService,
       resolveReqContext(req),
@@ -228,13 +317,15 @@ export function mountMcpServer(
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       res.on('close', () => {
+        recordRequest();
         void transport.close();
         void server.close();
       });
+      res.on('finish', recordRequest);
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      logger.error('Error handling MCP request', error instanceof Error ? error.stack : String(error));
+      logger.error('Error handling MCP request', error instanceof Error ? error.name : 'UnknownError');
       if (!res.headersSent) {
         res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null });
       }
@@ -252,4 +343,14 @@ export function mountMcpServer(
   // silently leave this mount uncapped.
   const bodyLimit = resolveBodyLimit(process.env.BODY_SIZE_LIMIT);
   adapter.post(basePath, createIpThrottle(ipRateLimiter), express.json({ limit: bodyLimit, inflate: false }), handler);
+  const stableAlias = readStableAlias();
+  if (stableAlias) {
+    adapter.post(
+      '/:mcpToken/mcp',
+      createIpThrottle(ipRateLimiter),
+      createStableAliasAuth(stableAlias, auditService),
+      express.json({ limit: bodyLimit, inflate: false }),
+      handler,
+    );
+  }
 }

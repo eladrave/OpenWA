@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, UnauthorizedException } from '
 import { ZodError } from 'zod';
 import type { AuthService } from '../../modules/auth/auth.service';
 import type { AnyToolDescriptor } from './tool-descriptor';
+import type { ApiKey } from '../../modules/auth/entities/api-key.entity';
 
 /**
  * Run one tool call with REST-equivalent guarantees, reusing core's own auth:
@@ -25,8 +26,9 @@ export async function invokeTool(
   rawInput: unknown,
   rawKey: string | undefined,
   authService: AuthService,
-  onAuthenticated?: (apiKeyId: string) => void,
+  onAuthenticated?: (apiKey: ApiKey) => void,
   onAuthFailure?: (error: unknown) => void,
+  clientIp?: string,
 ): Promise<unknown> {
   // AUTH PHASE — every rejection here is an authentication/authorization failure (the MCP analog of the
   // REST ApiKeyGuard's authorize()). Wrapped so onAuthFailure can record the audit trail at the boundary.
@@ -48,8 +50,12 @@ export async function invokeTool(
       throw new BadRequestException('sessionId is required for this tool');
     }
 
-    apiKey = await authService.validateApiKey(rawKey, undefined, sessionId);
-    onAuthenticated?.(apiKey.id);
+    apiKey = await authService.validateApiKey(rawKey, clientIp, sessionId);
+    onAuthenticated?.(apiKey);
+
+    if (tool.requiresExplicitSessionGrant && (!sessionId || !apiKey.allowedSessions?.includes(sessionId))) {
+      throw new ForbiddenException('This tool requires an explicit session grant');
+    }
 
     if (tool.requiredRole && !authService.hasPermission(apiKey, tool.requiredRole)) {
       throw new ForbiddenException('API key lacks the required role');

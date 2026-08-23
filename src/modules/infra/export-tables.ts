@@ -232,6 +232,12 @@ export const EXPORT_TABLES: AnyExportTable[] = [
   // rule with it — exporting and re-inserting it is not optional, or a restore silently destroys
   // every autoreply rule.
   defineExportTable({ key: 'automationRules', table: 'automation_rules', optional: true }),
+  defineExportTable({ key: 'monitorProfiles', table: 'monitor_profiles', optional: true }),
+  defineExportTable({ key: 'monitorGroups', table: 'monitor_groups', optional: true }),
+  defineExportTable({ key: 'monitorRules', table: 'monitor_rules', optional: true }),
+  defineExportTable({ key: 'monitorMatches', table: 'monitor_matches', optional: true }),
+  defineExportTable({ key: 'monitorCursors', table: 'monitor_cursors', optional: true }),
+  defineExportTable({ key: 'monitorAuthFlows', table: 'monitor_auth_flows', optional: true }),
 ];
 
 /**

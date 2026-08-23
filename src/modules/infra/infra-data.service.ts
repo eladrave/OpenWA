@@ -113,6 +113,14 @@ export async function restoreSessionOwnership(
  * classified must not silently opt into suspending a safety mechanism.
  */
 const SHARED_CONNECTION_DIALECTS = new Set(['better-sqlite3', 'sqlite']);
+const MONITORING_EXPORT_TABLES = new Set([
+  'monitor_profiles',
+  'monitor_groups',
+  'monitor_rules',
+  'monitor_matches',
+  'monitor_cursors',
+  'monitor_auth_flows',
+]);
 
 /**
  * Aggregate budget for the inline base64 media ONE export may carry, counted in the encoded bytes
@@ -303,9 +311,12 @@ export class InfraDataService {
     // A skipped table is surfaced in `skippedTables` (and logged as a warning) so an operator can tell
     // "not migrated yet" apart from "exported empty".
     const skippedTables: string[] = [];
-    const queryOptionalTable = async (table: string): Promise<unknown[]> => {
+    const queryOptionalTable = async (
+      table: string,
+      query: (sql: string) => Promise<unknown[]> = sql => this.dataDataSource.query(sql),
+    ): Promise<unknown[]> => {
       try {
-        return await this.dataDataSource.query(`SELECT * FROM ${table}`);
+        return await query(`SELECT * FROM ${table}`);
       } catch (error) {
         if (!isMissingTableError(error)) throw error;
         skippedTables.push(table);
@@ -313,6 +324,40 @@ export class InfraDataService {
         return [];
       }
     };
+
+    // Profiles, groups, rules, matches, cursors, and flow metadata form one restart/restore state.
+    // Read them from one database snapshot so an acknowledgment or rule change cannot land between
+    // independent SELECTs and produce a backup that replays or skips work after restore. Fake
+    // DataSources used by query-error unit tests intentionally lack createQueryRunner and keep their
+    // direct-query path; every real TypeORM DataSource takes this snapshot path.
+    const monitoringSnapshot = new Map<string, unknown[]>();
+    if (typeof this.dataDataSource.createQueryRunner === 'function') {
+      const queryRunner = this.dataDataSource.createQueryRunner();
+      try {
+        await queryRunner.connect();
+        const dialect = String(this.dataDataSource.options.type);
+        await queryRunner.startTransaction(dialect === 'postgres' ? 'REPEATABLE READ' : 'SERIALIZABLE');
+        for (const entry of EXPORT_TABLES.filter(item => MONITORING_EXPORT_TABLES.has(item.table))) {
+          if (entry.optional && !(await queryRunner.hasTable(entry.table))) {
+            skippedTables.push(entry.table);
+            this.logger.warn('Optional table does not exist in this DB; exporting without it', {
+              table: entry.table,
+            });
+            monitoringSnapshot.set(entry.table, []);
+            continue;
+          }
+          const query = (sql: string): Promise<unknown[]> => queryRunner.query(sql) as Promise<unknown[]>;
+          const rows = await query(`SELECT * FROM ${entry.table}`);
+          monitoringSnapshot.set(entry.table, rows);
+        }
+        await queryRunner.commitTransaction();
+      } catch (error) {
+        if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction().catch(() => undefined);
+        throw error;
+      } finally {
+        await queryRunner.release();
+      }
+    }
 
     // One budget shared by the tables that carry a full inline payload (messages and
     // message_batches today), so the total is what is bounded rather than each table separately.
@@ -325,9 +370,12 @@ export class InfraDataService {
     const counts = {} as TableCounts;
 
     for (const entry of EXPORT_TABLES) {
-      const rows: unknown[] = entry.optional
-        ? await queryOptionalTable(entry.table)
-        : await this.dataDataSource.query(`SELECT * FROM ${entry.table}`);
+      const snapshotted = monitoringSnapshot.get(entry.table);
+      const rows: unknown[] =
+        snapshotted ??
+        (entry.optional
+          ? await queryOptionalTable(entry.table)
+          : await this.dataDataSource.query(`SELECT * FROM ${entry.table}`));
       // `rows` was read for exactly this entry's table, so it holds the row type the entry's hooks
       // declare. That correlation is what the erased entry type cannot carry, and this loop is the
       // one place it is known — so the casts live here rather than at each hook.

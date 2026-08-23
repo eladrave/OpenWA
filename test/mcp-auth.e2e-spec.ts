@@ -3,6 +3,11 @@ jest.mock('archiver', () => ({ TarArchive: jest.fn() }));
 
 // Enable the MCP server before AppModule is imported.
 process.env.MCP_ENABLED = 'true';
+process.env.MCP_READONLY = 'true';
+process.env.MCP_TOOL_PROFILE = 'monitoring';
+process.env.MCP_MONITOR_CONFIG_WRITES = 'true';
+process.env.MCP_ENROLLMENT_WRITES = 'true';
+process.env.MCP_RATE_LIMIT_MAX = '2';
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { type INestApplication } from '@nestjs/common';
@@ -10,6 +15,11 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { applyGlobalValidation } from '../src/config/app-validation';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { AuthService } from '../src/modules/auth/auth.service';
+import { ApiKeyRole } from '../src/modules/auth/entities/api-key.entity';
+import { Session, SessionStatus } from '../src/modules/session/entities/session.entity';
 
 // --- MCP protocol helpers ---
 
@@ -52,6 +62,10 @@ function parseMcpResponse(res: { body: unknown; text: string }): Record<string, 
 
 describe('MCP server (e2e)', () => {
   let app: INestApplication<App>;
+  let scopedKey: string;
+  let rateKey: string;
+  const sessionOne = '11111111-1111-4111-a111-111111111111';
+  const sessionTwo = '22222222-2222-4222-a222-222222222222';
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -61,6 +75,47 @@ describe('MCP server (e2e)', () => {
     app = moduleFixture.createNestApplication();
     applyGlobalValidation(app);
     await app.init();
+
+    const dataSource = app.get<DataSource>(getDataSourceToken('data'));
+    const sessions = dataSource.getRepository(Session);
+    for (const [id, name] of [
+      [sessionOne, 'mcp-monitor-one'],
+      [sessionTwo, 'mcp-monitor-two'],
+    ] as const) {
+      await sessions.save(
+        sessions.create({
+          id,
+          name,
+          status: SessionStatus.CREATED,
+          phone: null,
+          pushName: null,
+          config: {},
+          proxyUrl: null,
+          proxyType: null,
+          connectedAt: null,
+          lastActiveAt: null,
+          nodeId: null,
+          claimedAt: null,
+          nodeUrl: null,
+          leaseExpiresAt: null,
+        }),
+      );
+    }
+    const auth = app.get(AuthService);
+    scopedKey = (
+      await auth.createApiKey({
+        name: 'MCP scoped test key',
+        role: ApiKeyRole.OPERATOR,
+        allowedSessions: [sessionOne],
+      })
+    ).rawKey;
+    rateKey = (
+      await auth.createApiKey({
+        name: 'MCP rate test key',
+        role: ApiKeyRole.OPERATOR,
+        allowedSessions: [sessionOne],
+      })
+    ).rawKey;
   }, 30_000);
 
   afterAll(async () => {
@@ -104,7 +159,13 @@ describe('MCP server (e2e)', () => {
     expect(tools!.length).toBeGreaterThan(0);
     // Verify well-known tools are present
     const names = tools!.map(t => t.name);
-    expect(names).toContain('SessionFindAll');
+    expect(names).toHaveLength(21);
+    expect(names).toContain('WhatsAppAuthGetStatus');
+    expect(names).toContain('MonitorGetDigestBatch');
+    expect(names).toContain('MonitorUpsertRule');
+    expect(names).not.toContain('SessionFindAll');
+    expect(names).not.toContain('MessageSendText');
+    expect(names).not.toContain('GroupGetInviteCode');
   });
 
   // ---------------------------------------------------------------------------
@@ -117,7 +178,7 @@ describe('MCP server (e2e)', () => {
       .set(MCP_HEADERS)
       .send(
         jsonRpcRequest('tools/call', {
-          name: 'SessionFindAll',
+          name: 'WhatsAppAuthListSessions',
           arguments: {},
         }),
       );
@@ -147,28 +208,55 @@ describe('MCP server (e2e)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. MCP_READONLY mode — write tools hidden from catalogue
-  //    Tested at integration level: the `readOnly` flag path in mcp.server.ts
-  //    calls registry.list({ readOnly: true }), which is unit-tested in
-  //    tool-registry.spec.ts. A second full app boot is not cost-effective here;
-  //    we note the gap and mark as pending.
+  // 5. Focused profile keeps generic WhatsApp writes hidden while independently gated local writes load.
   // ---------------------------------------------------------------------------
-  it.todo('MCP_READONLY=true hides write tools — requires second app boot');
+  it('MCP_READONLY=true plus monitoring gates never publishes generic WhatsApp writes', async () => {
+    const res = await request(app.getHttpServer()).post('/mcp').set(MCP_HEADERS).send(jsonRpcRequest('tools/list'));
+    const body = parseMcpResponse(res);
+    const tools = (body.result as { tools: Array<{ name: string }> }).tools;
+    const names = tools.map(tool => tool.name);
+    expect(names).toContain('MonitorSetGroup');
+    expect(names).toContain('WhatsAppAuthBegin');
+    expect(names).not.toContain('MessageSendText');
+    expect(names).not.toContain('ContactBlock');
+    expect(names).not.toContain('GroupCreate');
+  });
 
   // ---------------------------------------------------------------------------
-  // 6. Rate limiter at 429
-  //    The per-key limiter is fully covered by mcp-rate-limit.spec.ts.
-  //    Triggering it in e2e needs > 60 same-key tool calls in 60s, making the
-  //    suite slow. The wiring (mountMcpServer → rateLimiter.check) is 3 lines
-  //    with no branching. Marking as pending.
+  // 6. Post-auth per-principal limiter, injected with a tiny e2e limit.
   // ---------------------------------------------------------------------------
-  it.todo('rate limiter returns 429-equivalent tool error past cap — see mcp-rate-limit.spec.ts');
+  it('rate limiter returns an in-band error after the configured per-key cap', async () => {
+    const call = () =>
+      request(app.getHttpServer())
+        .post('/mcp')
+        .set(MCP_HEADERS)
+        .set('Authorization', `Bearer ${rateKey}`)
+        .send(jsonRpcRequest('tools/call', { name: 'WhatsAppAuthGetStatus', arguments: { sessionId: sessionOne } }));
+    expect((await call()).status).toBe(200);
+    expect((await call()).status).toBe(200);
+    const limited = parseMcpResponse(await call());
+    const result = limited.result as { isError?: boolean; content?: Array<{ text?: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0].text).toMatch(/rate limit/i);
+  });
 
   // ---------------------------------------------------------------------------
-  // 7. Session-scoped key scoping
-  //    Requires a created session + a key with allowedSessions set. The full
-  //    session lifecycle (QR scan, WhatsApp connect) is not automatable in e2e.
-  //    Covered by invokeTool unit test (tool-invoker.spec.ts).
+  // 7. Session-scoped key scoping over a DB-only status tool (no real WhatsApp needed).
   // ---------------------------------------------------------------------------
-  it.todo('session-scoped key calling another sessions tool is rejected — see tool-invoker.spec.ts');
+  it('session-scoped key calling another session is rejected before the handler', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/mcp')
+      .set(MCP_HEADERS)
+      .set('X-API-Key', scopedKey)
+      .send(
+        jsonRpcRequest('tools/call', {
+          name: 'WhatsAppAuthGetStatus',
+          arguments: { sessionId: sessionTwo },
+        }),
+      );
+    expect(res.status).toBe(200);
+    const result = parseMcpResponse(res).result as { isError?: boolean; content?: Array<{ text?: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0].text).toMatch(/not authorized|unauthorized/i);
+  });
 });

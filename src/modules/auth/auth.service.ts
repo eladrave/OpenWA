@@ -43,8 +43,12 @@ export function resolveSeedApiKey(): string {
  * pipeline (Docker/Loki/CloudWatch) on each restart — it stays in `data/.api-key` (0600) and the
  * dashboard. A placeholder (e.g. "(check dashboard for keys)") is passed through unchanged.
  */
-export function bannerKeyLine(displayKey: string, isNewKey: boolean): string {
-  if (isNewKey) return displayKey;
+export function bannerKeyLine(
+  displayKey: string,
+  isNewKey: boolean,
+  production = process.env.NODE_ENV === 'production',
+): string {
+  if (isNewKey && !production) return displayKey;
   if (displayKey.startsWith('(')) return displayKey;
   return `${displayKey.slice(0, 8)}… (full key in data/.api-key or the dashboard)`;
 }

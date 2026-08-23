@@ -72,11 +72,17 @@ describe('bannerKeyLine (startup banner key masking)', () => {
   const FULL = 'owa_k1_0123456789abcdef0123456789abcdef';
 
   it('prints the full key only when it was just created', () => {
-    expect(bannerKeyLine(FULL, true)).toBe(FULL);
+    expect(bannerKeyLine(FULL, true, false)).toBe(FULL);
+  });
+
+  it('never writes a newly generated raw key to production logs', () => {
+    const line = bannerKeyLine(FULL, true, true);
+    expect(line).not.toContain(FULL);
+    expect(line).toContain('full key in data/.api-key');
   });
 
   it('masks the key on subsequent boots — the full secret is never re-logged', () => {
-    const line = bannerKeyLine(FULL, false);
+    const line = bannerKeyLine(FULL, false, false);
     expect(line).not.toContain('0123456789abcdef'); // the secret tail must not appear
     expect(line.startsWith('owa_k1_0')).toBe(true); // a short fingerprint is fine
     expect(line).toMatch(/data\/\.api-key|dashboard/); // points the operator to the real source

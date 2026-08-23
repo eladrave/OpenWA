@@ -1,4 +1,4 @@
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm';
 import { Message } from '../message/entities/message.entity';
 import { KeyedMutationQueue } from '../../common/utils/keyed-mutation-queue';
@@ -36,8 +36,36 @@ export class MessageMutationProjector {
    * Queue an edit apply. Shares the reaction chain so rapid edit-vs-reaction on the same message
    * stays ordered rather than racing.
    */
-  applyMessageEditQueued(id: string, message: EditedMessage): void {
-    this.enqueueMessageMutation(id, message.messageId, () => this.applyMessageEdit(id, message));
+  applyMessageEditQueued(
+    id: string,
+    message: EditedMessage,
+    afterApplied?: (manager: EntityManager) => Promise<void>,
+  ): void {
+    this.enqueueMessageMutation(id, message.messageId, () => this.applyMessageEdit(id, message, afterApplied));
+  }
+
+  applyMessageRevokeQueued(
+    id: string,
+    messageId: string,
+    afterApplied?: (manager: EntityManager) => Promise<void>,
+  ): void {
+    this.enqueueMessageMutation(id, messageId, async () => {
+      try {
+        await this.withMutationRetries(() =>
+          this.runTransaction(async manager => {
+            await manager
+              .getRepository(Message)
+              .update({ sessionId: id, waMessageId: messageId }, { body: '', type: 'revoked' });
+            await afterApplied?.(manager);
+          }),
+        );
+      } catch (err) {
+        this.logger.error(
+          'Failed to apply atomic message revocation',
+          err instanceof Error ? err.name : 'UnknownError',
+        );
+      }
+    });
   }
 
   /** Queue a message-scoped mutation. A failed operation is isolated so later events still run. */
@@ -89,21 +117,52 @@ export class MessageMutationProjector {
       // reactions too. Idempotency for this event is salted per dispatch.
       void this.webhookService.dispatch(id, 'message.reaction', payload);
     } catch (err) {
-      this.logger.error(`Failed to update message reaction: ${event.messageId}`, String(err));
+      this.logger.error('Failed to update message reaction', err instanceof Error ? err.name : 'UnknownError');
     }
   }
 
   /** Persist an edit before notifying consumers, while still surfacing the occurrence if storage fails. */
-  private async applyMessageEdit(id: string, message: EditedMessage): Promise<void> {
+  private async applyMessageEdit(
+    id: string,
+    message: EditedMessage,
+    afterApplied?: (manager: EntityManager) => Promise<void>,
+  ): Promise<void> {
     try {
-      await this.messageRepository.update({ sessionId: id, waMessageId: message.messageId }, { body: message.body });
+      await this.withMutationRetries(() =>
+        this.runTransaction(async manager => {
+          const updated = await manager
+            .getRepository(Message)
+            .update({ sessionId: id, waMessageId: message.messageId }, { body: message.body });
+          if ((updated?.affected ?? 0) === 1) await afterApplied?.(manager);
+        }),
+      );
     } catch (err) {
-      this.logger.error(`Failed to update edited message: ${message.messageId}`, String(err));
+      this.logger.error('Failed to apply atomic message edit', err instanceof Error ? err.name : 'UnknownError');
     }
 
     const editedPayload = message as unknown as Record<string, unknown>;
     this.eventsGateway.emitMessageEdited(id, editedPayload);
     void this.webhookService.dispatch(id, 'message.edited', editedPayload);
+  }
+
+  private async withMutationRetries(work: () => Promise<void>): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await work();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  /** Real repositories always provide a manager; the fallback preserves standalone unit fixtures. */
+  private runTransaction(work: (manager: EntityManager) => Promise<void>): Promise<void> {
+    const manager = (this.messageRepository as Repository<Message> & { manager?: EntityManager }).manager;
+    if (manager?.transaction) return manager.transaction(work);
+    return work({ getRepository: () => this.messageRepository } as unknown as EntityManager);
   }
 
   /**
@@ -119,7 +178,9 @@ export class MessageMutationProjector {
         try {
           await this.messageRepository.update({ sessionId, waMessageId: messageId }, { body });
         } catch (err) {
-          this.logger.warn(`Failed to update stored body of edited message ${messageId}`, { error: String(err) });
+          this.logger.warn('Failed to update stored body of edited message', {
+            errorType: err instanceof Error ? err.name : 'UnknownError',
+          });
         } finally {
           resolve();
         }

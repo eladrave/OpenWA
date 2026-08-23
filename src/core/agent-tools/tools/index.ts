@@ -5,6 +5,8 @@ import type { GroupService } from '../../../modules/group/group.service';
 import type { WebhookService } from '../../../modules/webhook/webhook.service';
 import type { LabelService } from '../../../modules/label/label.service';
 import type { AutomationRulesService } from '../../../modules/automation/automation-rules.service';
+import type { MonitoringService } from '../../../modules/monitoring/monitoring.service';
+import type { EnrollmentService } from '../../../modules/monitoring/enrollment.service';
 import type { AnyToolDescriptor } from '../tool-descriptor';
 import { sessionTools } from './session.tools';
 import { messageTools } from './message.tools';
@@ -13,6 +15,8 @@ import { groupTools } from './group.tools';
 import { webhookTools } from './webhook.tools';
 import { labelTools } from './label.tools';
 import { automationTools } from './automation.tools';
+import { monitoringTools } from './monitoring.tools';
+import { enrollmentTools } from './enrollment.tools';
 
 /** The services each tool family needs. Stubs suffice where a spec only inspects declarations. */
 export interface AgentToolDeps {
@@ -23,6 +27,8 @@ export interface AgentToolDeps {
   webhook: WebhookService;
   labels: LabelService;
   automation: AutomationRulesService;
+  monitoring: MonitoringService;
+  enrollment: EnrollmentService;
 }
 
 /**
@@ -42,5 +48,7 @@ export function allAgentTools(deps: AgentToolDeps): AnyToolDescriptor[] {
     ...webhookTools(deps.webhook),
     ...labelTools(deps.labels),
     ...automationTools(deps.automation),
+    ...monitoringTools(deps.monitoring),
+    ...enrollmentTools(deps.enrollment),
   ];
 }

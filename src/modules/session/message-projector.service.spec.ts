@@ -44,35 +44,50 @@ const historyMessage = (over: Partial<IncomingMessage> = {}): IncomingMessage =>
   }) as IncomingMessage;
 
 describe('MessageProjector', () => {
-  let messageRepository: { find: jest.Mock; findOne: jest.Mock; create: jest.Mock; update: jest.Mock };
+  let messageRepository: {
+    find: jest.Mock;
+    findOne: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    manager: { transaction: jest.Mock };
+  };
   let eventsGateway: {
     emitMessage: jest.Mock;
     emitMessageSent: jest.Mock;
     emitMessageRevoked: jest.Mock;
     emitMessageReaction: jest.Mock;
+    emitMessageEdited: jest.Mock;
   };
   let webhookService: { dispatch: jest.Mock };
   let engines: EngineRegistry;
   let engine: IWhatsAppEngine;
   let projector: MessageProjector;
+  let monitoringIngest: { reconcileEditInTransaction: jest.Mock; reconcileRevokeInTransaction: jest.Mock };
 
   beforeEach(() => {
+    const transactionManager = { getRepository: jest.fn(() => messageRepository) };
     messageRepository = {
       find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((x: unknown) => x),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
+      manager: { transaction: jest.fn((work: (manager: unknown) => Promise<void>) => work(transactionManager)) },
     };
     eventsGateway = {
       emitMessage: jest.fn(),
       emitMessageSent: jest.fn(),
       emitMessageRevoked: jest.fn(),
       emitMessageReaction: jest.fn(),
+      emitMessageEdited: jest.fn(),
     };
     webhookService = { dispatch: jest.fn().mockResolvedValue(undefined) };
     engines = new EngineRegistry();
     engine = {} as IWhatsAppEngine;
     engines.set('s1', engine);
+    monitoringIngest = {
+      reconcileEditInTransaction: jest.fn().mockResolvedValue(undefined),
+      reconcileRevokeInTransaction: jest.fn().mockResolvedValue(undefined),
+    };
     projector = new MessageProjector(
       messageRepository as unknown as Repository<Message>,
       { findOne: jest.fn().mockResolvedValue(null) } as unknown as Repository<Session>,
@@ -82,6 +97,10 @@ describe('MessageProjector', () => {
       { execute: jest.fn().mockResolvedValue(undefined) } as unknown as HookManager,
       {} as unknown as StatusStoreService,
       { resolveSenderPhone: jest.fn().mockResolvedValue(null) } as unknown as SessionLidResolver,
+      undefined,
+      undefined,
+      undefined,
+      monitoringIngest as never,
     );
   });
 
@@ -240,6 +259,28 @@ describe('MessageProjector', () => {
 
       expect(messageRepository.update).not.toHaveBeenCalled();
       expect(webhookService.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyMessageEditQueued', () => {
+    it('does not project an edit when no durable source message row exists', async () => {
+      messageRepository.update.mockResolvedValueOnce({ affected: 0 });
+      projector.applyMessageEditQueued('s1', {
+        messageId: 'EPHEMERAL',
+        chatId: 'group@g.us',
+        senderId: 'sender@c.us',
+        from: 'group@g.us',
+        to: 'owner@c.us',
+        body: 'edited body',
+        type: 'text',
+        timestamp: 1_777_000_000,
+        fromMe: false,
+        isGroup: true,
+        hasMedia: false,
+      });
+      await settle();
+      await settle();
+      expect(monitoringIngest.reconcileEditInTransaction).not.toHaveBeenCalled();
     });
   });
 

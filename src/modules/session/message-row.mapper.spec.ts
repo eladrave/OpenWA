@@ -26,6 +26,14 @@ describe('buildMessageMetadata', () => {
     expect(buildMessageMetadata(msg({ call }))).toEqual({ call });
   });
 
+  it('stores bounded structured mention ids for monitoring preview without message-body parsing', () => {
+    const mentionedIds = Array.from({ length: 60 }, (_, index) => `${index + 10000}@c.us`);
+    expect(buildMessageMetadata(msg({ mentionedIds }))).toEqual({
+      mentionedIds: mentionedIds.slice(0, 50),
+      normalizationVersion: 1,
+    });
+  });
+
   it('stores every present field together', () => {
     const built = buildMessageMetadata(
       msg({

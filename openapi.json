@@ -39,6 +39,15 @@
                 "webhook_deleted",
                 "webhook_triggered",
                 "webhook_failed",
+                "monitor_group_set",
+                "monitor_group_removed",
+                "monitor_rule_upserted",
+                "monitor_rule_deleted",
+                "monitor_matches_acknowledged",
+                "monitor_enrollment_began",
+                "monitor_enrollment_cancelled",
+                "monitor_disconnected",
+                "monitor_disconnect_failed",
                 "integration_instance_created",
                 "integration_instance_updated",
                 "integration_instance_secret_regenerated",
@@ -13679,6 +13688,42 @@
             "items": {
               "type": "object"
             }
+          },
+          "monitorProfiles": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "monitorGroups": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "monitorRules": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "monitorMatches": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "monitorCursors": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "monitorAuthFlows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
           }
         },
         "required": [
@@ -13696,7 +13741,13 @@
           "webhookOutboxEvents",
           "integrationDeliveryFailures",
           "statusUpdates",
-          "automationRules"
+          "automationRules",
+          "monitorProfiles",
+          "monitorGroups",
+          "monitorRules",
+          "monitorMatches",
+          "monitorCursors",
+          "monitorAuthFlows"
         ]
       },
       "TableCountsDto": {
@@ -13761,6 +13812,30 @@
           "automationRules": {
             "type": "number",
             "example": 2
+          },
+          "monitorProfiles": {
+            "type": "number",
+            "example": 1
+          },
+          "monitorGroups": {
+            "type": "number",
+            "example": 2
+          },
+          "monitorRules": {
+            "type": "number",
+            "example": 5
+          },
+          "monitorMatches": {
+            "type": "number",
+            "example": 20
+          },
+          "monitorCursors": {
+            "type": "number",
+            "example": 1
+          },
+          "monitorAuthFlows": {
+            "type": "number",
+            "example": 0
           }
         },
         "required": [
@@ -13778,7 +13853,13 @@
           "webhookOutboxEvents",
           "integrationDeliveryFailures",
           "statusUpdates",
-          "automationRules"
+          "automationRules",
+          "monitorProfiles",
+          "monitorGroups",
+          "monitorRules",
+          "monitorMatches",
+          "monitorCursors",
+          "monitorAuthFlows"
         ]
       },
       "OmittedInlineMediaDto": {
@@ -13900,6 +13981,24 @@
                 "type": "array"
               },
               "automationRules": {
+                "type": "array"
+              },
+              "monitorProfiles": {
+                "type": "array"
+              },
+              "monitorGroups": {
+                "type": "array"
+              },
+              "monitorRules": {
+                "type": "array"
+              },
+              "monitorMatches": {
+                "type": "array"
+              },
+              "monitorCursors": {
+                "type": "array"
+              },
+              "monitorAuthFlows": {
                 "type": "array"
               }
             }

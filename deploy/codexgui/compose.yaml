@@ -1,0 +1,46 @@
+services:
+  openwa-monitor:
+    image: ${OPENWA_MONITOR_IMAGE:?set OPENWA_MONITOR_IMAGE to an immutable tag or digest}
+    restart: unless-stopped
+    stop_grace_period: 45s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The image entrypoint starts as root only to repair /app/data ownership, then execs Node through
+    # gosu as the unprivileged openwa user. These are the exact capabilities that transition needs.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    pids_limit: 2048
+    mem_limit: 2g
+    env_file:
+      - /etc/openwa-monitor/runtime.env
+    extra_hosts:
+      - '${OPENWA_MONITOR_PG_HOSTNAME:?set OPENWA_MONITOR_PG_HOSTNAME to the PostgreSQL certificate hostname}:host-gateway'
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+    volumes:
+      - /var/lib/openwa-monitor:/app/data
+      - /etc/openwa-monitor/postgres-ca.pem:/run/secrets/postgres-ca.pem:ro
+    expose:
+      - '2785'
+    networks:
+      edge:
+        aliases:
+          - ${OPENWA_MONITOR_EDGE_ALIAS:?set OPENWA_MONITOR_EDGE_ALIAS after live conflict inspection}
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://127.0.0.1:2785/api/health/ready']
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+networks:
+  edge:
+    name: edge
+    external: true

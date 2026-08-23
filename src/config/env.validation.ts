@@ -346,6 +346,9 @@ export function validateEnv(config: EnvConfig): EnvConfig {
   for (const key of [
     'QUEUE_ENABLED',
     'MCP_ENABLED',
+    'MCP_MONITOR_CONFIG_WRITES',
+    'MCP_ENROLLMENT_WRITES',
+    'MCP_MONITOR_ALLOW_UNSCOPED_ADMIN',
     'SERVE_DASHBOARD',
     'AUTO_START_SESSIONS',
     'STATUS_SEED_ON_READY',
@@ -408,6 +411,36 @@ export function validateEnv(config: EnvConfig): EnvConfig {
     // safe state, so strictness here would refuse working deployments to no benefit.
   ]) {
     checkBool(key);
+  }
+
+  const mcpToolProfile = config.MCP_TOOL_PROFILE;
+  if (
+    mcpToolProfile !== undefined &&
+    (typeof mcpToolProfile !== 'string' ||
+      (mcpToolProfile.trim() !== '' && mcpToolProfile !== 'all' && mcpToolProfile !== 'monitoring'))
+  ) {
+    errors.push(`MCP_TOOL_PROFILE must be "all" or "monitoring" (got ${JSON.stringify(mcpToolProfile)})`);
+  }
+
+  const stableMcpToken = typeof config.MCP_STABLE_URL_TOKEN === 'string' ? config.MCP_STABLE_URL_TOKEN.trim() : '';
+  const stableMcpBackendKey =
+    typeof config.MCP_STABLE_BACKEND_API_KEY === 'string' ? config.MCP_STABLE_BACKEND_API_KEY.trim() : '';
+  if (Boolean(stableMcpToken) !== Boolean(stableMcpBackendKey)) {
+    errors.push('MCP_STABLE_URL_TOKEN and MCP_STABLE_BACKEND_API_KEY must be configured together');
+  }
+  if (stableMcpToken && !/^[A-Za-z0-9_-]{43,128}$/.test(stableMcpToken)) {
+    errors.push('MCP_STABLE_URL_TOKEN must be 43-128 URL-safe high-entropy characters');
+  }
+  if (stableMcpBackendKey && stableMcpBackendKey.length < 32) {
+    errors.push('MCP_STABLE_BACKEND_API_KEY must be at least 32 characters');
+  }
+  if (stableMcpToken && mcpToolProfile !== 'monitoring') {
+    errors.push('MCP_STABLE_URL_TOKEN requires MCP_TOOL_PROFILE=monitoring');
+  }
+  const monitorCursorSecret =
+    typeof config.MCP_MONITOR_CURSOR_SECRET === 'string' ? config.MCP_MONITOR_CURSOR_SECRET.trim() : '';
+  if (monitorCursorSecret && !/^[A-Za-z0-9_-]{43,128}$/.test(monitorCursorSecret)) {
+    errors.push('MCP_MONITOR_CURSOR_SECRET must be 43-128 URL-safe high-entropy characters');
   }
 
   // MEDIA_DOWNLOAD_ENABLED is the one boolean whose read site NORMALISES before comparing

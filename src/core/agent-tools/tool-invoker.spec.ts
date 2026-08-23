@@ -84,6 +84,28 @@ describe('invokeTool', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it('requires a non-empty exact session grant for focused monitoring tools', async () => {
+    const scoped: ToolDescriptor = {
+      ...readTool,
+      sessionScoped: true,
+      requiresExplicitSessionGrant: true,
+      inputSchema: z.object({ sessionId: z.string() }),
+      handler: () => Promise.resolve('ok'),
+    };
+    await expect(
+      invokeTool(scoped, { sessionId: 's1' }, 'rawkey', auth({ allowedSessions: null }) as unknown as AuthService),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      invokeTool(scoped, { sessionId: 's1' }, 'rawkey', auth({ allowedSessions: ['s1'] }) as unknown as AuthService),
+    ).resolves.toBe('ok');
+  });
+
+  it('passes the trusted request IP through to API-key validation', async () => {
+    const a = auth();
+    await invokeTool(readTool, { n: 1 }, 'rawkey', a as unknown as AuthService, undefined, undefined, '203.0.113.5');
+    expect(a.validateApiKey).toHaveBeenCalledWith('rawkey', '203.0.113.5', undefined);
+  });
+
   it('enforces requiredRole via hasPermission', async () => {
     const a = auth();
     (a.hasPermission as jest.Mock).mockReturnValue(false);
@@ -94,12 +116,12 @@ describe('invokeTool', () => {
   });
 
   // FIX 3(b): onAuthenticated callback
-  it('calls onAuthenticated with apiKey.id after successful validateApiKey', async () => {
+  it('calls onAuthenticated with the resolved API key after successful validation', async () => {
     const a = auth({ id: 'key-abc' });
     const onAuthenticated = jest.fn();
     await invokeTool(readTool, { n: 1 }, 'rawkey', a as unknown as AuthService, onAuthenticated);
     expect(onAuthenticated).toHaveBeenCalledTimes(1);
-    expect(onAuthenticated).toHaveBeenCalledWith('key-abc');
+    expect(onAuthenticated).toHaveBeenCalledWith(expect.objectContaining({ id: 'key-abc' }));
   });
 
   it('does NOT call onAuthenticated when validateApiKey throws', async () => {

@@ -55,3 +55,16 @@ test('every patcher is also wired into postinstall', () => {
   const missing = patchers.filter(p => !planned.includes(p));
   assert.deepEqual(missing, [], `not wired into postinstall: ${missing.join(', ')}`);
 });
+
+test('builder dependency install cannot download/extract an unpatched Puppeteer browser', () => {
+  const builderInstall = dockerfile.indexOf('RUN npm ci --include=dev');
+  assert.ok(builderInstall > 0, 'builder npm ci not found');
+  assert.ok(
+    dockerfile.indexOf('ENV PUPPETEER_SKIP_DOWNLOAD=true') < builderInstall,
+    'PUPPETEER_SKIP_DOWNLOAD must precede builder npm ci',
+  );
+  assert.ok(
+    dockerfile.indexOf('COPY package*.json .puppeteerrc.cjs ./') < builderInstall,
+    '.puppeteerrc.cjs must be copied before builder npm ci',
+  );
+});

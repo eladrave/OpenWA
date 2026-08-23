@@ -242,6 +242,105 @@ export interface AutomationRuleRow {
   updatedAt: string | Date;
 }
 
+export interface MonitorProfileRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  ownerJid: string | null;
+  enabled: boolean | number;
+  retentionDays: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface MonitorGroupRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  groupJid: string;
+  name: string;
+  enabled: boolean | number;
+  lastReconciledCreatedAt: string | Date | null;
+  lastReconciledMessageRowId: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface MonitorRuleRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  groupJid: string;
+  name: string;
+  enabled: boolean | number;
+  matchMode: string;
+  conditions: string;
+  exclusions: string;
+  priority: string;
+  tags: string;
+  timezone: string;
+  activeHours: string | null;
+  quietHours: string | null;
+  retentionDays: number | null;
+  version: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface MonitorMatchRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  groupJid: string;
+  groupName: string;
+  ruleId: string;
+  ruleVersion: number;
+  matchMode: string;
+  messageId: string;
+  senderJid: string;
+  senderLabel: string | null;
+  messageTimestamp: number | string;
+  messageType: string;
+  body: string | null;
+  media: string | null;
+  evidence: string;
+  semanticConditions: string;
+  urgency: string;
+  priority: string;
+  tags: string;
+  state: string;
+  acknowledgedAt: string | Date | null;
+  expiresAt: string | Date;
+  createdAt: string | Date;
+}
+
+export interface MonitorCursorRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  name: string;
+  version: number;
+  lastAcknowledgedMatchId: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+export interface MonitorAuthFlowRow {
+  id: string;
+  principalId: string;
+  sessionId: string;
+  activeKey: string | null;
+  mode: string;
+  state: string;
+  expiresAt: string | Date;
+  challengeIssuedAt: string | Date | null;
+  completedAt: string | Date | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
 export interface MigrationTables {
   sessions: SessionRow[];
   webhooks: WebhookRow[];
@@ -258,6 +357,12 @@ export interface MigrationTables {
   integrationDeliveryFailures: IntegrationDeliveryFailureRow[];
   statusUpdates: StatusUpdateRow[];
   automationRules: AutomationRuleRow[];
+  monitorProfiles: MonitorProfileRow[];
+  monitorGroups: MonitorGroupRow[];
+  monitorRules: MonitorRuleRow[];
+  monitorMatches: MonitorMatchRow[];
+  monitorCursors: MonitorCursorRow[];
+  monitorAuthFlows: MonitorAuthFlowRow[];
 }
 
 export type TableCounts = { [K in keyof MigrationTables]: number };

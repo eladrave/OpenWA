@@ -24,6 +24,7 @@ import { SessionRestrictionStore } from './session-restriction-store.service';
 import { PresenceStore, type ChatPresence } from './presence-store.service';
 import { SessionEngineLifecycle, resolveReconnectConfig } from './session-engine-lifecycle.service';
 import { SessionOwnershipService } from './session-ownership.service';
+import { EnrollmentChallengeBroker } from './enrollment-challenge-broker.service';
 import { paginate, ListOptions, resolveListWindow } from '../../common/utils/paginate';
 import { isUniqueViolation } from '../../common/utils/db-errors';
 import { resolveFeatureFlags } from '../../config/feature-flags';
@@ -112,6 +113,8 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
     // behaves as unowned there, which is what a single-process deployment is anyway.
     @Optional()
     private readonly ownership?: SessionOwnershipService,
+    @Optional()
+    private readonly enrollmentBroker?: EnrollmentChallengeBroker,
   ) {}
 
   /**
@@ -549,6 +552,9 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
   }
 
   async getQRCode(id: string): Promise<{ qrCode: string; status: SessionStatus }> {
+    if (this.enrollmentBroker?.isManaged(id)) {
+      throw new ConflictException('A managed MCP enrollment flow owns this session challenge');
+    }
     const session = await this.findOne(id);
     const engine = this.engines.require(
       id,
@@ -575,6 +581,9 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
    * The session must be started but not yet authenticated.
    */
   async requestPairingCode(id: string, phoneNumber: string): Promise<{ pairingCode: string; status: SessionStatus }> {
+    if (this.enrollmentBroker?.isManaged(id)) {
+      throw new ConflictException('A managed MCP enrollment flow owns this session challenge');
+    }
     const session = await this.findOne(id);
     const engine = this.engines.require(
       id,

@@ -70,6 +70,7 @@ describe('docs/29 counts match the capability matrix', () => {
       total: files.length,
       wwjs: files.filter(f => f.startsWith('patch-wwebjs-')).length,
       baileys: files.filter(f => f.startsWith('patch-baileys-')).length,
+      supplyChain: files.filter(f => !f.startsWith('patch-wwebjs-') && !f.startsWith('patch-baileys-')).length,
     };
   };
 
@@ -79,7 +80,7 @@ describe('docs/29 counts match the capability matrix', () => {
 
     // Guard the derivation: a renamed prefix would make every expectation below zero and pass.
     expect(expected.total).toBeGreaterThan(4);
-    expect(expected.wwjs + expected.baileys).toBe(expected.total);
+    expect(expected.wwjs + expected.baileys + expected.supplyChain).toBe(expected.total);
 
     // 29.3's opening sentence and 29.3.2's split spell the figure in prose rather than digits, which
     // is why they drifted while the digit-shaped claims held: a patcher was added to each library and
@@ -106,8 +107,13 @@ describe('docs/29 counts match the capability matrix', () => {
       { label: '29.8 split', re: /install-time patches \((\d+) whatsapp-web\.js/, want: expected.wwjs },
       {
         label: '29.8 split baileys',
-        re: /install-time patches \(\d+ whatsapp-web\.js \+ (\d+) Baileys\)/,
+        re: /install-time patches \(\d+ whatsapp-web\.js \+ (\d+) Baileys/,
         want: expected.baileys,
+      },
+      {
+        label: '29.8 split supply chain',
+        re: /\d+ Baileys \+ (\d+) build-supply-chain\)/,
+        want: expected.supplyChain,
       },
     ];
 

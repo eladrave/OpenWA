@@ -19,6 +19,8 @@ import { StatusStoreModule } from '../status-store/status-store.module';
 import { ChatMediaModule } from '../chat-media/chat-media.module';
 import { AutomationModule } from '../automation/automation.module';
 import { PLUGIN_SESSION_PORT, type PluginSessionPort } from '../../core/plugins/plugin-host-ports';
+import { EnrollmentChallengeBroker } from './enrollment-challenge-broker.service';
+import { MonitoringPersistenceModule } from '../monitoring/monitoring-persistence.module';
 
 @Module({
   // WebhookModule/StatusStoreModule/ChatMediaModule/AutomationModule do not import SessionModule
@@ -29,6 +31,7 @@ import { PLUGIN_SESSION_PORT, type PluginSessionPort } from '../../core/plugins/
     StatusStoreModule,
     ChatMediaModule,
     AutomationModule,
+    MonitoringPersistenceModule,
   ],
   controllers: [SessionController],
   providers: [
@@ -43,6 +46,7 @@ import { PLUGIN_SESSION_PORT, type PluginSessionPort } from '../../core/plugins/
     SessionLivenessWatchdog,
     SessionOwnershipService,
     MessageProjector,
+    EnrollmentChallengeBroker,
     // Binds the core-owned plugin capability port to this module's service; resolved lazily by the
     // plugin runtime (PluginHostServices) so its provider cycle stays broken.
     {
@@ -51,6 +55,6 @@ import { PLUGIN_SESSION_PORT, type PluginSessionPort } from '../../core/plugins/
       inject: [SessionService],
     },
   ],
-  exports: [SessionService, MessageProjector, SessionOwnershipService],
+  exports: [SessionService, MessageProjector, SessionOwnershipService, EnrollmentChallengeBroker],
 })
 export class SessionModule {}

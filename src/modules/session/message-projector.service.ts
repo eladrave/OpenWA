@@ -35,6 +35,7 @@ import {
   deliveryStatusToAck,
   ackStatusTransitionFrom,
 } from '../message/message-status.util';
+import { MonitoringIngestService } from '../monitoring/monitoring-ingest.service';
 
 /**
  * Projects engine message events into the `messages` table and out to webhooks/WebSocket.
@@ -78,11 +79,11 @@ export class MessageProjector {
   // Serializes stored-message mutations per `${sessionId}:${waMessageId}`. Reactions perform a
   // read-modify-write and rapid edits must remain latest-write-wins; sharing one chain also preserves
   // order when different mutation kinds for the same message arrive together.
-  private readonly messageMutations = new KeyedMutationQueue((key, err) => {
+  private readonly messageMutations = new KeyedMutationQueue((_key, err) => {
     // Both current mutation implementations contain their own contextual error handling. Keep a
     // final guard here so a future implementation cannot leak a rejected fire-and-forget promise
     // or permanently block the message's later mutations.
-    this.logger.error(`Unexpected failure applying message mutation: ${key}`, String(err));
+    this.logger.error('Unexpected failure applying message mutation', err instanceof Error ? err.name : 'UnknownError');
   });
 
   // Reaction/edit applies, extracted to a plain collaborator. It shares this instance's
@@ -109,6 +110,8 @@ export class MessageProjector {
     // Optional for the same reason. Absent simply means no autoreply rules are evaluated.
     @Optional()
     private readonly automationRules?: AutomationRulesService,
+    @Optional()
+    private readonly monitoringIngest?: MonitoringIngestService,
   ) {
     this.mutationProjector = new MessageMutationProjector(
       this.messageRepository,
@@ -145,7 +148,9 @@ export class MessageProjector {
         source: 'Engine',
       })
       .then(({ data: finalMessage }) => this.projectInboundMessage(id, engine, finalMessage))
-      .catch(err => this.logger.error(`onMessage handler failed for ${id}`, String(err)));
+      .catch(err =>
+        this.logger.error('Inbound message handler failed', err instanceof Error ? err.name : 'UnknownError'),
+      );
   }
 
   /** `isStatusBroadcast` arm of {@link handleInboundMessage}: ingest into the status store, not the message pipeline. */
@@ -171,8 +176,7 @@ export class MessageProjector {
         })
         .catch(err =>
           this.logger.warn('Status ingest failed', {
-            sessionId: id,
-            error: err instanceof Error ? err.message : String(err),
+            errorType: err instanceof Error ? err.name : 'UnknownError',
           }),
         );
     }
@@ -295,7 +299,10 @@ export class MessageProjector {
       if (isUniqueViolation(err)) {
         isNewMessage = false;
       } else {
-        this.logger.error(`Failed to save incoming message ${incoming.id} to database`, String(err));
+        this.logger.error(
+          'Failed to save incoming message to database',
+          err instanceof Error ? err.name : 'UnknownError',
+        );
       }
     }
     if (!isNewMessage) {
@@ -329,6 +336,16 @@ export class MessageProjector {
       // storage. Gated on `persisted` because the archive updates the row by id, and on a failed
       // insert there is no row to point at the file. A no-op unless archiving is enabled.
       void this.chatMediaArchive?.archive(dbMessage).catch(() => undefined);
+
+      // Monitoring consumes only messages that won the durable source-row insert. This preserves
+      // the existing UNIQUE(sessionId, waMessageId) dedup oracle and prevents duplicate engine
+      // deliveries from creating duplicate matches. Failure is isolated and later recovered by the
+      // bounded persisted-message reconciler.
+      void this.monitoringIngest?.ingestIncoming(id, finalMessage).catch(error =>
+        this.logger.warn('Monitoring ingest failed; the reconciler will retry the persisted message', {
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
     }
 
     // Dispatch to webhooks with potentially modified message
@@ -422,7 +439,10 @@ export class MessageProjector {
             // the dedup oracle working as intended, not an error. Anything else is a real DB
             // failure; fail open so a real send is never dropped on a transient DB fault.
             if (!isUniqueViolation(err)) {
-              this.logger.error(`Failed to save outgoing message ${outgoing.id} to database`, String(err));
+              this.logger.error(
+                'Failed to save outgoing message to database',
+                err instanceof Error ? err.name : 'UnknownError',
+              );
             }
           }
           if (persisted) {
@@ -450,7 +470,7 @@ export class MessageProjector {
         // Emit real-time event to WebSocket clients (as message.sent, not message.received)
         this.eventsGateway.emitMessageSent(id, finalMessage);
       })
-      .catch(err => this.logger.error(`onMessageCreate handler failed for ${id}`, String(err)));
+      .catch(err => this.logger.error('Own-message handler failed', err instanceof Error ? err.name : 'UnknownError'));
   }
 
   /** Engine callback body, lifted out of initializeEngine so the wiring table stays readable. */
@@ -490,7 +510,7 @@ export class MessageProjector {
         });
 
       const onAckError = (err: unknown): void =>
-        this.logger.error(`Failed to advance ack for ${messageId}`, String(err));
+        this.logger.error('Failed to advance message acknowledgment', err instanceof Error ? err.name : 'UnknownError');
 
       void advanceAck()
         .then(affected => {
@@ -559,11 +579,9 @@ export class MessageProjector {
     // `message.id` is the revocation notification, which never matches a stored row.
     // `revokedId` falls back to `id` (Baileys, where the two are the same).
     const revokedWaMessageId = message.revokedId ?? message.id;
-    void this.messageRepository
-      .update({ sessionId: id, waMessageId: revokedWaMessageId }, { body: '', type: 'revoked' })
-      .catch(err => {
-        this.logger.error(`Failed to update revoked message: ${revokedWaMessageId}`, String(err));
-      });
+    this.mutationProjector.applyMessageRevokeQueued(id, revokedWaMessageId, async manager => {
+      await this.monitoringIngest?.reconcileRevokeInTransaction(manager, id, revokedWaMessageId);
+    });
 
     // Notify consumers regardless of whether the row existed: webhook (message.revoked
     // is a declared event) + the real-time dashboard stream.
@@ -584,7 +602,9 @@ export class MessageProjector {
 
   /** Edit apply, queued on the per-message mutation chain — see MessageMutationProjector. */
   applyMessageEditQueued(id: string, message: EditedMessage): void {
-    this.mutationProjector.applyMessageEditQueued(id, message);
+    this.mutationProjector.applyMessageEditQueued(id, message, async manager => {
+      await this.monitoringIngest?.reconcileEditInTransaction(manager, id, message);
+    });
   }
 
   /** Queue a message-scoped mutation. A failed operation is isolated so later events still run. */

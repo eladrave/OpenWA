@@ -1,4 +1,4 @@
-import { Controller, Get, Req, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Optional, Req, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { HealthCheckResponseDto, LivenessResponseDto, ReadinessResponseDto } from './dto/health-response.dto';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -13,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuditAction } from '../audit/entities/audit-log.entity';
 import { SlidingWindowLimiter } from '../events/ws-rate-limit';
 import { resolveClientIp } from '../../common/utils/ip';
+import { MonitoringWorkerHealthService } from '../monitoring/monitoring-worker-health.service';
 
 interface DependencyStatus {
   status: 'up' | 'down';
@@ -44,6 +45,7 @@ export class HealthController {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly auditService: AuditService,
+    @Optional() private readonly monitorWorkers?: MonitoringWorkerHealthService,
   ) {
     // Bounds the audit rows one source IP can write per minute through this deliberately
     // unthrottled route: the health probes themselves must never be rate-limited, but without a
@@ -133,7 +135,9 @@ export class HealthController {
       dataDatabase: { status: data },
     };
 
-    if (main === 'down' || data === 'down') {
+    if (this.monitorWorkers?.isDegraded()) details.monitoringWorkers = { status: 'down' };
+
+    if (main === 'down' || data === 'down' || this.monitorWorkers?.isDegraded()) {
       // 503 so orchestrators/LBs stop routing traffic to a node with a dead DB.
       throw new ServiceUnavailableException({ status: 'error', details });
     }

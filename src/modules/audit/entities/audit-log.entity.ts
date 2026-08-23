@@ -51,6 +51,18 @@ export enum AuditAction {
   WEBHOOK_TRIGGERED = 'webhook_triggered',
   WEBHOOK_FAILED = 'webhook_failed',
 
+  // WhatsApp monitoring local control-plane and enrollment events. Metadata carries only opaque
+  // internal row ids/counts, never message bodies, group JIDs, phone numbers, QR/pairing codes, or tokens.
+  MONITOR_GROUP_SET = 'monitor_group_set',
+  MONITOR_GROUP_REMOVED = 'monitor_group_removed',
+  MONITOR_RULE_UPSERTED = 'monitor_rule_upserted',
+  MONITOR_RULE_DELETED = 'monitor_rule_deleted',
+  MONITOR_MATCHES_ACKNOWLEDGED = 'monitor_matches_acknowledged',
+  MONITOR_ENROLLMENT_BEGAN = 'monitor_enrollment_began',
+  MONITOR_ENROLLMENT_CANCELLED = 'monitor_enrollment_cancelled',
+  MONITOR_DISCONNECTED = 'monitor_disconnected',
+  MONITOR_DISCONNECT_FAILED = 'monitor_disconnect_failed',
+
   // Integration plugin-instance events
   INTEGRATION_INSTANCE_CREATED = 'integration_instance_created',
   INTEGRATION_INSTANCE_UPDATED = 'integration_instance_updated',

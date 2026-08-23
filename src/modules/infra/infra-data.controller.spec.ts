@@ -42,8 +42,18 @@ import { WebhookOutboxEvent } from '../webhook/entities/webhook-outbox-event.ent
 import { IntegrationDeliveryFailure } from '../integration/entities/integration-delivery-failure.entity';
 import { StatusUpdate } from '../status-store/entities/status-update.entity';
 import { AutomationRule } from '../automation/entities/automation-rule.entity';
+import {
+  MonitorAuthFlow,
+  MonitorCursor,
+  MonitorGroup,
+  MonitorMatch,
+  MonitorProfile,
+  MonitorRule,
+} from '../monitoring/entities';
 import { AuditAction } from '../audit/entities/audit-log.entity';
 import { BadRequestException } from '@nestjs/common';
+
+const MONITORING_ENTITIES = [MonitorProfile, MonitorGroup, MonitorRule, MonitorMatch, MonitorCursor, MonitorAuthFlow];
 
 describe('InfraDataController.importData round-trips export-data (no silent message/batch loss)', () => {
   let ds: DataSource;
@@ -79,6 +89,7 @@ describe('InfraDataController.importData round-trips export-data (no silent mess
         IntegrationDeliveryFailure,
         StatusUpdate,
         AutomationRule,
+        ...MONITORING_ENTITIES,
       ],
       synchronize: true,
     });
@@ -1219,6 +1230,7 @@ describe('InfraDataController.import/export preserves every data-DB table', () =
         IntegrationDeliveryFailure,
         StatusUpdate,
         AutomationRule,
+        ...MONITORING_ENTITIES,
       ],
       synchronize: true,
     });
@@ -1483,6 +1495,7 @@ describe('InfraDataController audit trail — import emits only on a committed r
         IntegrationDeliveryFailure,
         StatusUpdate,
         AutomationRule,
+        ...MONITORING_ENTITIES,
       ],
       synchronize: true,
     });
@@ -1628,6 +1641,7 @@ describe('InfraDataController.importData status_updates + runtime reconciliation
         IntegrationDeliveryFailure,
         StatusUpdate,
         AutomationRule,
+        ...MONITORING_ENTITIES,
       ],
       synchronize: true,
     });

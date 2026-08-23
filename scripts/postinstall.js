@@ -1,7 +1,7 @@
 /**
  * Post-install hook (npm `postinstall`).
  *
- * Eight conditional steps, each skipped when its target is absent so the hook is a no-op where the
+ * Ten conditional steps, each skipped when its target is absent so the hook is a no-op where the
  * piece is missing (the Docker builder stage copies package*.json long before any source):
  *
  *   1. `npm ci` inside dashboard/ when dashboard/ exists — the dashboard carries its own lockfile and
@@ -30,6 +30,8 @@
  *   9. `node scripts/patch-baileys-newsletter-create.js --best-effort` when present, the
  *      newsletter-create parse fix. Steps 7-8 are the Baileys patches, so a Baileys-only install
  *      runs those and skips 2-6.
+ *  10. `node scripts/patch-extract-zip-symlink.js` validates symlink targets in the no-fixed-release
+ *      `extract-zip` dependency used by Puppeteer's build-time browser installer.
  *
  * Structured like scripts/patch-wwebjs-201832.js: pure planning + injectable spawn, so the spec
  * (scripts/postinstall.spec.js, node:test) exercises every branch without a real npm run.
@@ -142,6 +144,15 @@ function planSteps(root, env = process.env) {
       name: 'Baileys newsletter-create parse fix (scripts/patch-baileys-newsletter-create.js --best-effort)',
       command: process.execPath,
       args: [baileysNewsletterPatcher, '--best-effort'],
+      options: { stdio: 'inherit', cwd: root, env: cleanEnv },
+    });
+  }
+  const extractZipPatcher = path.join(root, 'scripts', 'patch-extract-zip-symlink.js');
+  if (fs.existsSync(extractZipPatcher)) {
+    steps.push({
+      name: 'extract-zip symlink target validation (scripts/patch-extract-zip-symlink.js)',
+      command: process.execPath,
+      args: [extractZipPatcher],
       options: { stdio: 'inherit', cwd: root, env: cleanEnv },
     });
   }
