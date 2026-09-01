@@ -63,6 +63,11 @@ describe('codexgui monitoring Compose overlay', () => {
     expect(secretCheck).toContain('root:root:600');
   });
 
+  it('does not retake ownership of state that Docker may already have mounted at boot', () => {
+    expect(systemd).toContain('ExecStartPre=/usr/bin/install -d -m 0700 /var/lib/openwa-monitor');
+    expect(systemd).not.toContain('ExecStartPre=/usr/bin/install -d -o root -g root -m 0700 /var/lib/openwa-monitor');
+  });
+
   it('keeps readiness private instead of exposing a public DB-probe endpoint', () => {
     expect(routes).not.toContain('/api/health');
     expect(service.healthcheck).toBeDefined();

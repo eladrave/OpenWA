@@ -15,13 +15,20 @@ conflict. Replace the example values only in root-owned host files; never commit
 /etc/openwa-monitor/runtime.env     stable runtime credentials and compatibility token, root:root 0600
 /etc/openwa-monitor/deploy.env      immutable image and resolved host aliases, root:root 0600
 /etc/openwa-monitor/postgres-ca.pem PostgreSQL server certificate trust anchor, root-owned
-/var/lib/openwa-monitor/            main auth/audit SQLite and WhatsApp auth state, root:root 0700
+/var/lib/openwa-monitor/            main auth/audit SQLite and WhatsApp auth state, mode 0700
 /etc/systemd/system/openwa-monitor.service
 ```
 
 The application publishes no host port, mounts no Docker socket, and joins only the external `edge`
 network under one unique alias. The image entrypoint repairs `/app/data` ownership with a minimal
 capability set, then drops to its unprivileged `openwa` user before Node or Chromium starts.
+
+The systemd preflight enforces mode `0700` on `/var/lib/openwa-monitor` without forcing its owner.
+This is deliberate: Docker's restart policy can start the existing container while `docker.service`
+is still activating, before `openwa-monitor.service` runs. Reassigning an already-mounted directory
+to `root:root` in that window would revoke the unprivileged process's access. On a new directory the
+container entrypoint assigns the runtime `openwa` UID/GID; on an existing directory it preserves and
+repairs that runtime ownership.
 
 Session, message, and monitoring data use a dedicated database/role on the host's existing native
 PostgreSQL 16 service through a certificate-matching hostname mapped to Docker's `host-gateway`.
